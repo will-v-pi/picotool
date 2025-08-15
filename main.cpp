@@ -533,6 +533,8 @@ struct _settings {
         string group;
         string key;
         string value;
+        string board_file;
+        map<string, tuple<string, int, bool, bool>> key_values; // string, int, is_number, is_set
     } config;
 
     struct {
@@ -766,6 +768,7 @@ struct config_command : public cmd {
                 value("key").set(settings.config.key) % "Variable name" +
                 value("value").set(settings.config.value) % "New value")
             ).force_expand_help(true) +
+            (option('b', "--set-board") & value("filename").set(settings.config.board_file)) % "Configure to match board header" +
             (option('g', "--group") & value("group").set(settings.config.group)) % "Filter by feature group" + 
             (
             #if HAS_LIBUSB
@@ -3917,18 +3920,8 @@ void info_guts(memory_access &raw_access, void *con) {
     }
 }
 
-void config_guts(memory_access &raw_access) {
+void config_inner_guts(memory_access &raw_access) {
     binary_info_header hdr;
-    int int_value;
-    bool not_int = false;
-    string string_value;
-
-    if (!settings.config.value.empty()) {
-        string_value = settings.config.value;
-        if (!get_int(settings.config.value, int_value)) {
-            not_int = true;
-        }
-    }
 
     auto bi_access = get_bi_access(raw_access);
     if (find_binary_info(*bi_access, hdr)) {
@@ -3955,7 +3948,7 @@ void config_guts(memory_access &raw_access) {
         visitor.visit(access, hdr);
 
         int fr_col = fos.first_column();
-        if (settings.config.value.empty()) {
+        if (settings.config.key_values.empty()) {
             visitor = bi_visitor{};
             visitor.ptr_int32_t_with_name([&](int tag, uint32_t id, const string &label, int32_t value) {
                 const auto &nfg = named_feature_groups.find(std::make_pair(tag, id));
@@ -4003,21 +3996,25 @@ void config_guts(memory_access &raw_access) {
         } else {
             auto modifier = bi_modifier{};
 
-            if (!not_int) {
-                modifier.ptr_int32_t_with_name([&](int tag, uint32_t id, const string &label, int32_t value, int32_t& new_value) -> bool {
-                    const auto &nfg = named_feature_groups.find(std::make_pair(tag, id));
-                    if (nfg == named_feature_groups.end() && !settings.config.group.empty()) {
-                        // Group specified, and this isn't in that group
-                        return false;
-                    }
-                    if (settings.config.key != label)
-                        return false;
-                    fos << label << " = " << value << "\n";
-                    new_value = int_value;
-                    fos << "setting " << label << " -> " << new_value << "\n";
-                    return true;
-                });
-            }
+            modifier.ptr_int32_t_with_name([&](int tag, uint32_t id, const string &label, int32_t value, int32_t& new_value) -> bool {
+                const auto &nfg = named_feature_groups.find(std::make_pair(tag, id));
+                if (nfg == named_feature_groups.end() && !settings.config.group.empty()) {
+                    // Group specified, and this isn't in that group
+                    return false;
+                }
+                if (settings.config.key_values.find(label) == settings.config.key_values.end())
+                    return false;
+                auto& kv = settings.config.key_values[label];
+                if (!std::get<2>(kv)) {
+                    fos << "not setting " << label << " -> " << std::get<0>(kv) << " (not a number)\n";
+                    return false;
+                }
+                fos << label << " = " << value << "\n";
+                new_value = std::get<1>(kv);
+                fos << "setting " << label << " -> " << new_value << "\n";
+                std::get<3>(kv) = true;
+                return true;
+            });
 
             modifier.ptr_string_t_with_name([&](int tag, uint32_t id, const string &label, const string &value, string& new_value) -> bool {
                 const auto &nfg = named_feature_groups.find(std::make_pair(tag, id));
@@ -4025,16 +4022,65 @@ void config_guts(memory_access &raw_access) {
                     // Group specified, and this isn't in that group
                     return false;
                 }
-                if (settings.config.key != label)
+                if (settings.config.key_values.find(label) == settings.config.key_values.end())
                     return false;
+                auto& kv = settings.config.key_values[label];
                 fos << label << " = \"" << value << "\"\n";
-                new_value = string_value;
+                new_value = std::get<0>(kv);
                 fos << "setting " << label << " -> \"" << new_value << "\"\n";
+                std::get<3>(kv) = true;
                 return true;
             });
 
             modifier.visit(access, hdr);
         }
+    }
+}
+
+void config_add_value(const string& key, const string& value) {
+    int int_value;
+    if (get_int(value, int_value)) {
+        settings.config.key_values.insert({key, {value, int_value, true, false}});
+    } else {
+        settings.config.key_values.insert({key, {value, 0, false, false}});
+    }
+}
+
+void config_guts(memory_access &raw_access) {
+    if (!settings.config.board_file.empty()) {
+        settings.config.group = "Pin Configuration";
+        std::ifstream board_file;
+        board_file.open(settings.config.board_file);
+        if (board_file.fail()) fail(ERROR_READ_FAILED, "Could not open '%s'", settings.config.board_file.c_str());
+        string line;
+        std::vector<string> ignored_defines;
+        while (std::getline(board_file, line)) {
+            if (line.find("#define") != string::npos) {
+                string def, name, value;
+                std::istringstream iss(line);
+                if (!(iss >> def >> name >> value)) continue;   // skip invalid lines
+                if (def == "#define") {
+                    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
+                    if (value.back() == 'u') value.pop_back();
+                    config_add_value(name, value);
+                }
+            }
+        }
+
+        config_inner_guts(raw_access);
+
+        fos << "\nIgnored defines from board header:\n";
+        for (const auto& kv : settings.config.key_values) {
+            if (!std::get<3>(kv.second)) {
+                fos << kv.first << "\n";
+            }
+        }
+        fos << "\n";
+    } else {
+        if (!settings.config.value.empty()) {
+            config_add_value(settings.config.key, settings.config.value);
+        }
+        config_inner_guts(raw_access);
     }
 }
 
