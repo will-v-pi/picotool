@@ -18,6 +18,12 @@
 #include "elf2uf2.h"
 #include "errors.h"
 #include "model.h"
+#include "crc32.h"
+
+// Support for SDK 2.1.0 & SDK 2.1.1 -----
+#ifndef UF2_EXTENSION_RP2_CRC32_BLOCK
+#define UF2_EXTENSION_RP2_CRC32_BLOCK  0x9957e408
+#endif
 
 #define FLASH_SECTOR_ERASE_SIZE 4096u
 
@@ -189,6 +195,13 @@ int pages2uf2(std::map<uint32_t, std::vector<page_fragment>>& pages, std::shared
         memset(block.data, 0, sizeof(block.data));
         int rc = realize_page(in, page_entry.second, block.data, sizeof(block.data));
         if (rc) return rc;
+        if (true) {
+            block.flags |= UF2_FLAG_EXTENSION_FLAGS_PRESENT;
+            uint32_t crc = 0;
+            crc32(block.data, UF2_PAGE_SIZE, &crc);
+            *(uint32_t*)&(block.data[UF2_PAGE_SIZE]) = UF2_EXTENSION_RP2_CRC32_BLOCK;
+            *(uint32_t*)&(block.data[UF2_PAGE_SIZE + 4]) = crc; // crc32
+        }
         out->write((char*)&block, sizeof(uf2_block));
         if (out->fail()) {
             fail_write_error();

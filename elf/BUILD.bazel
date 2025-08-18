@@ -2,11 +2,12 @@ package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "elf",
-    srcs = ["elf_file.cpp"],
+    srcs = ["elf_file.cpp", "crc32.cpp"],
     hdrs = [
         "elf.h",
         "elf_file.h",
         "portable_endian.h",
+        "crc32.h"
     ],
     copts = select({
         "@platforms//os:windows": [],
