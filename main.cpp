@@ -4061,7 +4061,13 @@ void config_guts(memory_access &raw_access) {
                 if (!(iss >> def >> name >> value)) continue;   // skip invalid lines
                 if (def == "#define") {
                     std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
+                    string value_lower = value;
+                    std::transform(value_lower.begin(), value_lower.end(), value_lower.begin(), [](unsigned char c) { return std::tolower(c); });
                     if (value.back() == 'u') value.pop_back();
+                    if (settings.config.key_values.find(value_lower) != settings.config.key_values.end()) {
+                        // Handle values that are a define, and replace with the value of the define
+                        value = std::get<0>(settings.config.key_values[value_lower]);
+                    }
                     config_add_value(name, value);
                 }
             }
