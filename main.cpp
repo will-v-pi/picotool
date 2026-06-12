@@ -1089,6 +1089,7 @@ struct seal_command : public cmd {
 };
 #endif // HAS_MBEDTLS && HAS_FILESYSTEM
 
+#if HAS_FILESYSTEM
 struct link_command : public cmd {
     link_command() : cmd("link") {}
     bool execute(device_map &devices) override;
@@ -1110,6 +1111,7 @@ struct link_command : public cmd {
         return "Link multiple binaries into one block loop.";
     }
 };
+#endif // HAS_FILESYSTEM
 
 #if HAS_USB
 struct partition_info_command : public cmd {
@@ -1129,6 +1131,7 @@ struct partition_info_command : public cmd {
 };
 #endif // HAS_USB
 
+#if HAS_FILESYSTEM
 struct partition_create_command : public cmd {
     partition_create_command() : cmd("create") {}
     bool execute(device_map &devices) override;
@@ -1171,13 +1174,16 @@ struct partition_create_command : public cmd {
         return "Create a partition table from json";
     }
 };
+#endif // HAS_FILESYSTEM
 
 
 vector<std::shared_ptr<cmd>> partition_sub_commands {
     #if HAS_USB
         std::shared_ptr<cmd>(new partition_info_command()),
     #endif
+    #if HAS_FILESYSTEM
         std::shared_ptr<cmd>(new partition_create_command()),
+    #endif
 };
 
 struct partition_command : public multi_cmd {
@@ -1356,6 +1362,7 @@ struct otp_set_command : public cmd {
     }
 };
 
+#if HAS_FILESYSTEM
 struct otp_permissions_command : public cmd {
     otp_permissions_command() : cmd("permissions") {}
     virtual bool requires_rp2350() const override { return true; }
@@ -1400,6 +1407,7 @@ struct otp_white_label_command : public cmd {
         return "Set the white labelling values in OTP";
     }
 };
+#endif // HAS_FILESYSTEM
 #endif // HAS_USB
 
 
@@ -1412,8 +1420,10 @@ vector<std::shared_ptr<cmd>> otp_sub_commands {
         std::shared_ptr<cmd>(new otp_load_command()),
     #endif // HAS_FILESYSTEM
         std::shared_ptr<cmd>(new otp_dump_command()),
+    #if HAS_FILESYSTEM
         std::shared_ptr<cmd>(new otp_permissions_command()),
         std::shared_ptr<cmd>(new otp_white_label_command()),
+    #endif // HAS_FILESYSTEM
     #endif // HAS_USB
 };
 
@@ -1494,6 +1504,7 @@ struct uf2_command : public multi_cmd {
     }
 };
 
+#if HAS_FILESYSTEM
 struct coprodis_command : public cmd {
     coprodis_command() : cmd("coprodis") {}
     bool execute(device_map &devices) override;
@@ -1514,6 +1525,7 @@ struct coprodis_command : public cmd {
 
     bool decode_line(uint32_t val, char *buf, size_t buf_len);
 };
+#endif // HAS_FILESYSTEM
 
 struct help_command : public cmd {
     help_command() : cmd("help") {}
@@ -6639,8 +6651,8 @@ uint32_t families_to_flags(std::vector<string> families, bool fail_invalid = fal
     return ret;
 }
 
-bool partition_create_command::execute(device_map &devices) {
 #if HAS_FILESYSTEM
+bool partition_create_command::execute(device_map &devices) {
     if (get_file_type_idx(0) != filetype::json) {
         fail(ERROR_ARGS, "json must be a json file\n");
     }
@@ -6841,10 +6853,8 @@ bool partition_create_command::execute(device_map &devices) {
     }
     out->close();
     return false;
-#else
-    return false;
-#endif // HAS_FILESYSTEM
 }
+#endif // HAS_FILESYSTEM
 
 #if HAS_USB
 bool uf2_info_command::execute(device_map &devices) {
@@ -8450,8 +8460,8 @@ bool otp_set_command::execute(device_map &devices) {
     return false;
 }
 
-bool otp_permissions_command::execute(device_map &devices) {
 #if HAS_FILESYSTEM
+bool otp_permissions_command::execute(device_map &devices) {
     auto con = get_single_picoboot_cmd_compatible_device_connection("otp permissions", devices, {PC_OTP_READ, PC_OTP_WRITE});
     picoboot_memory_access raw_access(con);
     auto model = raw_access.get_model();
@@ -8547,10 +8557,8 @@ bool otp_permissions_command::execute(device_map &devices) {
     // todo: read back after reboot (requires lots of stuff)
 
     return true;
-#else
-    return false;
-#endif // HAS_FILESYSTEM
 }
+#endif // HAS_FILESYSTEM
 
 enum wl_type {
     wl_value,
@@ -8605,8 +8613,8 @@ void wl_do_field(json json_data, vector<uint16_t>& data, uint32_t& flags, const 
     }
 }
 
-bool otp_white_label_command::execute(device_map &devices) {
 #if HAS_FILESYSTEM
+bool otp_white_label_command::execute(device_map &devices) {
     auto con = get_single_picoboot_cmd_compatible_device_connection("otp white-label", devices, {PC_OTP_READ, PC_OTP_WRITE});
     hack_init_otp_regs();
     picoboot_memory_access raw_access(con);
@@ -8731,10 +8739,8 @@ bool otp_white_label_command::execute(device_map &devices) {
     }
 
     return false;
-#else
-    return false;
-#endif // HAS_FILESYSTEM
 }
+#endif // HAS_FILESYSTEM
 #endif // HAS_USB
 
 
