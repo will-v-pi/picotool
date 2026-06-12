@@ -14,6 +14,9 @@
 #endif
 
 #include "boot/uf2.h"
+#if PICO_ON_DEVICE
+#include "pico.h" // because boot/picobin.h includes pico/platform.h
+#endif
 #include "boot/picoboot.h"
 
 // Unreadable ROM data

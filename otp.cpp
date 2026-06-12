@@ -1,16 +1,19 @@
 
 #include <algorithm>
 #include <map>
-#include <fstream>
 
 #include "otp.h"
 
+#if !PICO_ON_DEVICE
+#include <fstream>
 #include "whereami++.h"
+#endif
 
 #if CODE_OTP
 #include "otp_contents.h"
 #else
 #include "data_locs.h"
+#include "rp2350.json.h"
 #endif
 
 #ifndef NDEBUG
@@ -18,8 +21,6 @@
 #else
 #define DEBUG_LOG(...) ((void)0)
 #endif
-
-#include "rp2350.json.h"
 
 template <typename T>
 std::basic_string<T> lowercase(const std::basic_string<T>& s)
@@ -70,6 +71,7 @@ void init_otp(std::map<uint32_t, otp_reg> &otp_regs, std::vector<std::string> ex
     std::transform(j.begin(), j.end(), std::inserter(otp_regs, otp_regs.end()), [](const otp_reg& r) { return std::make_pair( r.row, r); });
 #endif
 
+#if !PICO_ON_DEVICE
     for (auto filename : extra_otp_files) {
         std::ifstream i(filename);
         if (i.good()) {
@@ -81,4 +83,5 @@ void init_otp(std::map<uint32_t, otp_reg> &otp_regs, std::vector<std::string> ex
             printf("Can't find JSON file %s\n", filename.c_str());
         }
     }
+#endif
 }

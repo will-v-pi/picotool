@@ -14,7 +14,9 @@
 #include <csignal>
 #include <cstdio>
 #include <regex>
+#if !PICO_ON_DEVICE
 #include <random>
+#endif
 #if !defined(__APPLE__) && !defined(__FreeBSD__)
 #include <cuchar>
 #endif
@@ -38,8 +40,22 @@
 #if HAS_LIBUSB
     #include "picoboot_connection_cxx.h"
     #include "get_xip_ram_perms.h"
+#elif USE_TINYUSB
+    #include "picoboot_connection_cxx.h"
+    #include "pico/time.h"
 #else
     #include "picoboot_connection.h"
+#endif
+
+// HAS_USB: set when USB device access is available via either libusb or TinyUSB.
+#if HAS_LIBUSB || USE_TINYUSB
+#define HAS_USB 1
+#endif
+#if !PICO_ON_DEVICE
+#define HAS_FILESYSTEM 1
+#endif
+#if HAS_FILESYSTEM
+#include <fstream>
 #endif
 #include "bintool.h"
 #include "elf2uf2.h"
@@ -56,6 +72,25 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
+#endif
+
+#if PICO_ON_DEVICE
+#include "pico/rand.h"
+#include <cstring>
+extern "C" int getentropy(void *buf, size_t n) {
+    uint8_t *p = static_cast<uint8_t *>(buf);
+    while (n >= sizeof(uint64_t)) {
+        uint64_t r = get_rand_64();
+        memcpy(p, &r, sizeof(r));
+        p += sizeof(r);
+        n -= sizeof(r);
+    }
+    if (n > 0) {
+        uint64_t r = get_rand_64();
+        memcpy(p, &r, n);
+    }
+    return 0;
+}
 #endif
 
 // missing __builtins on windows
@@ -110,7 +145,12 @@ using std::ios;
 using json = nlohmann::json;
 
 #if HAS_LIBUSB
-typedef map<enum picoboot_device_result,vector<tuple<chip_t, libusb_device *, libusb_device_handle *>>> device_map;
+// slot 1: libusb_device * (for bus/address display and reboot_device)
+// slot 2: usb_device_t   (libusb_device_handle *, used as the picoboot handle)
+typedef map<enum picoboot_device_result,vector<tuple<chip_t, libusb_device *, usb_device_t>>> device_map;
+#elif USE_TINYUSB
+// Both slots use usb_device_t (daddr). Slot 1 is kept for API symmetry.
+typedef map<enum picoboot_device_result,vector<tuple<chip_t, usb_device_t, usb_device_t>>> device_map;
 #else
 typedef map<enum picoboot_device_result,vector<tuple<chip_t, void *, void *>>> device_map;
 #endif
@@ -227,6 +267,10 @@ auto bus_device_string = [](struct libusb_device *device, chip_t chip) {
     string bus_device;
     bus_device = chip_name(chip) + string(" device at bus ");
     return bus_device + std::to_string(libusb_get_bus_number(device)) + ", address " + std::to_string(libusb_get_device_address(device));
+};
+#elif USE_TINYUSB
+auto bus_device_string = [](usb_device_t device, chip_t chip) {
+    return chip_name(chip) + string(" device at address ") + std::to_string((unsigned)device);
 };
 #endif
 
@@ -791,7 +835,7 @@ struct info_command : public cmd {
                 option('a', "--all").set(settings.info.all) % "Include all information"
             ).min(0).doc_non_optional(true) % "Information to display" +
             (
-            #if HAS_LIBUSB
+            #if HAS_USB
                 device_selection % "To target one or more connected RP-series device(s) in BOOTSEL mode (the default)" |
             #endif
                 file_selection % "To target a file"
@@ -800,7 +844,7 @@ struct info_command : public cmd {
     }
 
     string get_doc() const override {
-        #if HAS_LIBUSB
+        #if HAS_USB
         return "Display information from the target device(s) or file.\nWithout any arguments, this will display basic information for all connected RP-series devices in BOOTSEL mode";
         #else
         return "Display information from the target file.";
@@ -826,7 +870,7 @@ struct config_command : public cmd {
             ).force_expand_help(true) +
             (option('g', "--group") & value("group").set(settings.config.group)) % "Filter by feature group" + 
             (
-            #if HAS_LIBUSB
+            #if HAS_USB
                 device_selection % "To target one or more connected RP-series device(s) in BOOTSEL mode (the default)" |
             #endif
                 file_selection % "To target a file"
@@ -835,7 +879,7 @@ struct config_command : public cmd {
     }
 
     string get_doc() const override {
-        #if HAS_LIBUSB
+        #if HAS_USB
         return "Display or change program configuration settings from the target device(s) or file.";
         #else
         return "Display or change program configuration settings from the target file.";
@@ -843,7 +887,8 @@ struct config_command : public cmd {
     }
 };
 
-#if HAS_LIBUSB
+#if HAS_USB
+#if HAS_FILESYSTEM
 struct verify_command : public cmd {
     verify_command() : cmd("verify") {}
     bool execute(device_map &devices) override;
@@ -927,6 +972,7 @@ struct load_command : public cmd {
         return "Load the program / memory range stored in a file onto the device.";
     }
 };
+#endif // HAS_FILESYSTEM
 
 struct erase_command : public cmd {
     erase_command() : cmd("erase") {}
@@ -955,9 +1001,9 @@ struct erase_command : public cmd {
         return "Erase the program / memory stored in flash on the device.";
     }
 };
-#endif
+#endif // HAS_USB
 
-#if HAS_MBEDTLS
+#if HAS_MBEDTLS && HAS_FILESYSTEM
 struct encrypt_command : public cmd {
     encrypt_command() : cmd("encrypt") {}
     bool execute(device_map &devices) override;
@@ -1041,7 +1087,7 @@ struct seal_command : public cmd {
         return "Add final metadata to a binary, optionally including a hash and/or signature.";
     }
 };
-#endif
+#endif // HAS_MBEDTLS && HAS_FILESYSTEM
 
 struct link_command : public cmd {
     link_command() : cmd("link") {}
@@ -1065,7 +1111,7 @@ struct link_command : public cmd {
     }
 };
 
-#if HAS_LIBUSB
+#if HAS_USB
 struct partition_info_command : public cmd {
     partition_info_command() : cmd("info") {}
     bool execute(device_map &devices) override;
@@ -1081,7 +1127,7 @@ struct partition_info_command : public cmd {
         return "Print the device's partition table.";
     }
 };
-#endif
+#endif // HAS_USB
 
 struct partition_create_command : public cmd {
     partition_create_command() : cmd("create") {}
@@ -1128,7 +1174,7 @@ struct partition_create_command : public cmd {
 
 
 vector<std::shared_ptr<cmd>> partition_sub_commands {
-    #if HAS_LIBUSB
+    #if HAS_USB
         std::shared_ptr<cmd>(new partition_info_command()),
     #endif
         std::shared_ptr<cmd>(new partition_create_command()),
@@ -1173,7 +1219,7 @@ struct otp_list_command : public cmd {
         return "List matching known registers/fields";
     }
 };
-#if HAS_LIBUSB
+#if HAS_USB
 struct otp_get_command : public cmd {
     otp_get_command() : cmd("get") {}
     bool execute(device_map& devices) override;
@@ -1245,6 +1291,7 @@ struct otp_dump_command : public cmd {
     }
 };
 
+#if HAS_FILESYSTEM
 struct otp_load_command : public cmd {
     otp_load_command() : cmd("load") {}
     bool execute(device_map &devices) override;
@@ -1267,6 +1314,7 @@ struct otp_load_command : public cmd {
         return "Load the row range stored in a file into OTP and verify. Data is 2 bytes/row for ECC, 4 bytes/row for raw (MSB is ignored).";
     }
 };
+#endif // HAS_FILESYSTEM
 
 struct otp_set_command : public cmd {
     otp_set_command() : cmd("set") {}
@@ -1352,19 +1400,21 @@ struct otp_white_label_command : public cmd {
         return "Set the white labelling values in OTP";
     }
 };
-#endif
+#endif // HAS_USB
 
 
 vector<std::shared_ptr<cmd>> otp_sub_commands {
         std::shared_ptr<cmd>(new otp_list_command()),
-    #if HAS_LIBUSB
+    #if HAS_USB
         std::shared_ptr<cmd>(new otp_get_command()),
         std::shared_ptr<cmd>(new otp_set_command()),
+    #if HAS_FILESYSTEM
         std::shared_ptr<cmd>(new otp_load_command()),
+    #endif // HAS_FILESYSTEM
         std::shared_ptr<cmd>(new otp_dump_command()),
         std::shared_ptr<cmd>(new otp_permissions_command()),
         std::shared_ptr<cmd>(new otp_white_label_command()),
-    #endif
+    #endif // HAS_USB
 };
 
 struct otp_command : public multi_cmd {
@@ -1374,7 +1424,7 @@ struct otp_command : public multi_cmd {
     }
 };
 
-#if HAS_LIBUSB
+#if HAS_USB
 struct uf2_info_command : public cmd {
     uf2_info_command() : cmd("info") {}
     bool execute(device_map &devices) override;
@@ -1389,8 +1439,9 @@ struct uf2_info_command : public cmd {
         return "Print info about UF2 download.";
     }
 };
-#endif
+#endif // HAS_USB
 
+#if HAS_FILESYSTEM
 struct uf2_convert_command : public cmd {
     uf2_convert_command() : cmd("convert") {}
     bool execute(device_map &devices) override;
@@ -1425,12 +1476,15 @@ struct uf2_convert_command : public cmd {
         return "Convert ELF/BIN to UF2.";
     }
 };
+#endif // HAS_FILESYSTEM
 
 vector<std::shared_ptr<cmd>> uf2_sub_commands {
-    #if HAS_LIBUSB
-        std::shared_ptr<cmd>(new uf2_info_command()),
-    #endif
+    #if HAS_FILESYSTEM
         std::shared_ptr<cmd>(new uf2_convert_command()),
+    #endif // HAS_FILESYSTEM
+    #if HAS_USB
+        std::shared_ptr<cmd>(new uf2_info_command()),
+    #endif // HAS_USB
 };
 
 struct uf2_command : public multi_cmd {
@@ -1527,7 +1581,7 @@ struct version_command : public cmd {
     }
 };
 
-#if HAS_LIBUSB
+#if HAS_USB
 struct reboot_command : public cmd {
     bool quiet;
     reboot_command() : cmd("reboot") {}
@@ -1554,32 +1608,34 @@ struct reboot_command : public cmd {
     }
 };
 auto reboot_cmd = std::shared_ptr<reboot_command>(new reboot_command());
-#endif
+#endif // HAS_USB
 auto help_cmd = std::shared_ptr<help_command>(new help_command());
 
 vector<std::shared_ptr<cmd>> commands {
+        help_cmd,
+        std::shared_ptr<cmd>(new version_command()),
         std::shared_ptr<cmd>(new info_command()),
         std::shared_ptr<cmd>(new config_command()),
-    #if HAS_LIBUSB
+    #if HAS_USB
+    #if HAS_FILESYSTEM
         std::shared_ptr<cmd>(new load_command()),
-    #endif
-    #if HAS_MBEDTLS
-        std::shared_ptr<cmd>(new encrypt_command()),
-        std::shared_ptr<cmd>(new seal_command()),
-    #endif
-        std::shared_ptr<cmd>(new link_command()),
-    #if HAS_LIBUSB
         std::shared_ptr<cmd>(new save_command()),
-        std::shared_ptr<cmd>(new erase_command()),
         std::shared_ptr<cmd>(new verify_command()),
+    #endif // HAS_FILESYSTEM
+        std::shared_ptr<cmd>(new erase_command()),
         reboot_cmd,
-    #endif
-        std::shared_ptr<cmd>(new otp_command()),
+    #endif // HAS_USB
+    #if HAS_MBEDTLS && HAS_FILESYSTEM
+        std::shared_ptr<cmd>(new seal_command()),
+        std::shared_ptr<cmd>(new encrypt_command()),
+    #endif // HAS_MBEDTLS && HAS_FILESYSTEM
         std::shared_ptr<cmd>(new partition_command()),
         std::shared_ptr<cmd>(new uf2_command()),
-        std::shared_ptr<cmd>(new version_command()),
+        std::shared_ptr<cmd>(new otp_command()),
+    #if HAS_FILESYSTEM
         std::shared_ptr<cmd>(new coprodis_command()),
-        help_cmd
+        std::shared_ptr<cmd>(new link_command()),
+    #endif // HAS_FILESYSTEM
 };
 
 template <typename T>
@@ -1634,7 +1690,7 @@ int parse(const int argc, char **argv) {
         } else if (!selected_cmd && !no_global_header) {
             section_header(tool_name);
             fos.first_column(tab);
-        #if HAS_LIBUSB
+        #if HAS_USB
             fos << "Tool for interacting with RP-series device(s) in BOOTSEL mode, or with an RP-series binary" << "\n";
         #else
             fos << "Tool for interacting with an RP-series binary" << "\n";
@@ -2146,7 +2202,7 @@ static chip_revision_t determine_chip_revision(memory_access &raw_access) {
     }
     return chip_revision;
 }
-#if HAS_LIBUSB
+#if HAS_USB
 struct picoboot_memory_access : public memory_access {
     explicit picoboot_memory_access(picoboot::connection &connection) : connection(connection) {
         model = determine_model(*this);
@@ -2334,7 +2390,7 @@ private:
     picoboot::connection& connection;
     vector<std::tuple<uint32_t,uint32_t,vector<uint8_t>>> flash_cache;
 };
-#endif
+#endif // HAS_USB
 
 
 struct iostream_memory_access : public memory_access {
@@ -2350,7 +2406,7 @@ struct iostream_memory_access : public memory_access {
         model = m;
     }
 
-    void read(uint32_t address, uint8_t *buffer, uint32_t size, bool zero_fill) override {
+    void read(uint32_t address, uint8_t *buffer, unsigned int size, bool zero_fill) override {
         if (address == BOOTROM_MAGIC_ADDR && size == 4) {
             // return the memory model
             if (model->chip()== rp2040) {
@@ -2368,7 +2424,7 @@ struct iostream_memory_access : public memory_access {
             unsigned int this_size;
             try {
                 auto result = rmap.get(address);
-                this_size = std::min(size, result.first.max_offset - result.first.offset);
+                this_size = std::min(size, (unsigned int)(result.first.max_offset - result.first.offset));
                 assert(this_size);
                 file->seekg(result.second + result.first.offset, ios::beg);
                 file->read((char*)buffer, this_size);
@@ -2388,11 +2444,11 @@ struct iostream_memory_access : public memory_access {
         }
     }
 
-    void write(uint32_t address, uint8_t *buffer, uint32_t size) override {
+    void write(uint32_t address, uint8_t *buffer, unsigned int size) override {
         while (size) {
             unsigned int this_size;
             auto result = rmap.get(address);
-            this_size = std::min(size, result.first.max_offset - result.first.offset);
+            this_size = std::min(size, (unsigned int)(result.first.max_offset - result.first.offset));
             assert(this_size);
             file->seekp(result.second + result.first.offset, ios::beg);
             file->write((char*)buffer, this_size);
@@ -2415,6 +2471,7 @@ private:
 };
 
 
+#if HAS_FILESYSTEM
 struct file_memory_access : public iostream_memory_access {
     file_memory_access(std::shared_ptr<std::fstream> file, range_map<size_t>& rmap, uint32_t binary_start) : iostream_memory_access(file, rmap, binary_start), file(file) {
         
@@ -2426,6 +2483,7 @@ struct file_memory_access : public iostream_memory_access {
 private:
     std::shared_ptr<std::fstream>file;
 };
+#endif // HAS_FILESYSTEM
 
 struct remapped_memory_access : public memory_access {
     remapped_memory_access(memory_access &wrap, range_map<uint32_t> rmap) : wrap(wrap), rmap(rmap) {
@@ -2435,7 +2493,7 @@ struct remapped_memory_access : public memory_access {
     void read(uint32_t address, uint8_t *buffer, unsigned int size, bool zero_fill) override {
         while (size) {
             auto result = get_remapped(address);
-            unsigned int this_size = std::min(size, result.first.max_offset - result.first.offset);
+            unsigned int this_size = std::min(size, (unsigned int)(result.first.max_offset - result.first.offset));
             assert( this_size);
             wrap.read(result.second + result.first.offset, buffer, this_size, zero_fill);
             buffer += this_size;
@@ -2447,7 +2505,7 @@ struct remapped_memory_access : public memory_access {
     void write(uint32_t address, uint8_t *buffer, unsigned int size) override {
         while (size) {
             auto result = get_remapped(address);
-            unsigned int this_size = std::min(size, result.first.max_offset - result.first.offset);
+            unsigned int this_size = std::min(size, (unsigned int)(result.first.max_offset - result.first.offset));
             assert( this_size);
             wrap.write(result.second + result.first.offset, buffer, this_size);
             buffer += this_size;
@@ -2652,25 +2710,25 @@ struct bi_visitor_base {
             case BINARY_INFO_TYPE_ID_AND_STRING: {
                 binary_info_id_and_string_t value;
                 access.read_raw(addr, value);
-                string s = read_string(access, value.value);
+                string s = read_string(access, (uint32_t)(uintptr_t)value.value);
                 id_and_string(bi.tag, value.id, s);
                 break;
             }
             case BINARY_INFO_TYPE_PTR_INT32_WITH_NAME: {
                 binary_info_ptr_int32_with_name_t value;
                 access.read_raw(addr, value);
-                string s = read_string(access, value.label);
+                string s = read_string(access, (uint32_t)(uintptr_t)value.label);
                 int i;
-                access.read(value.value, (uint8_t*)&i, sizeof(i));
-                ptr_int32_t_with_name(access, bi.tag, value.id, s, i, value.value);
+                access.read((uint32_t)(uintptr_t)value.value, (uint8_t*)&i, sizeof(i));
+                ptr_int32_t_with_name(access, bi.tag, value.id, s, i, (uint32_t)(uintptr_t)value.value);
                 break;
             }
             case BINARY_INFO_TYPE_PTR_STRING_WITH_NAME: {
                 binary_info_ptr_string_with_name_t value;
                 access.read_raw(addr, value);
-                string s = read_string(access, value.label);
-                string v = read_string(access, value.value);
-                ptr_string_t_with_name(access, bi.tag, value.id, s, v, value.value, value.len);
+                string s = read_string(access, (uint32_t)(uintptr_t)value.label);
+                string v = read_string(access, (uint32_t)(uintptr_t)value.value);
+                ptr_string_t_with_name(access, bi.tag, value.id, s, v, (uint32_t)(uintptr_t)value.value, value.len);
                 break;
             }
             case BINARY_INFO_TYPE_BLOCK_DEVICE: {
@@ -2694,19 +2752,19 @@ struct bi_visitor_base {
             case BINARY_INFO_TYPE_PINS_WITH_NAME: {
                 binary_info_pins_with_name_t value;
                 access.read_raw(addr, value);
-                pins(value.pin_mask, -1, read_string(access, value.label));
+                pins(value.pin_mask, -1, read_string(access, (uint32_t)(uintptr_t)value.label));
                 break;
             }
             case BINARY_INFO_TYPE_PINS64_WITH_NAME: {
                 binary_info_pins64_with_name_t value;
                 access.read_raw(addr, value);
-                pins(value.pin_mask, -1, read_string(access, value.label));
+                pins(value.pin_mask, -1, read_string(access, (uint32_t)(uintptr_t)value.label));
                 break;
             }
             case BINARY_INFO_TYPE_NAMED_GROUP: {
                 binary_info_named_group_t value;
                 access.read_raw(addr, value);
-                named_group(value.core.tag, value.parent_id, value.group_tag, value.group_id, read_string(access, value.label), value.flags);
+                named_group(value.core.tag, value.parent_id, value.group_tag, value.group_id, read_string(access, (uint32_t)(uintptr_t)value.label), value.flags);
                 break;
             }
             default:
@@ -2962,6 +3020,7 @@ bool string_to_hex_array(const string& str, uint8_t *array, size_t size, const s
     return false;
 }
 
+#if HAS_FILESYSTEM
 std::shared_ptr<std::fstream> get_file_idx(ios::openmode mode, uint8_t idx) {
     auto filename = settings.filenames[idx];
     auto file = std::make_shared<std::fstream>(filename, mode);
@@ -2972,6 +3031,7 @@ std::shared_ptr<std::fstream> get_file_idx(ios::openmode mode, uint8_t idx) {
 std::shared_ptr<std::fstream> get_file(ios::openmode mode) {
     return get_file_idx(mode, 0);
 }
+#endif // HAS_FILESYSTEM
 
 enum filetype get_file_type_idx(uint8_t idx) {
     auto filename = settings.filenames[idx];
@@ -3165,6 +3225,7 @@ template <typename ACCESS, typename STREAM> ACCESS get_iostream_memory_access(st
     return ACCESS(file, rmap, binary_start);
 }
 
+#if HAS_FILESYSTEM
 file_memory_access get_file_memory_access(uint8_t idx, bool writeable = false, uint32_t *next_family_id=nullptr) {
     ios::openmode mode = (writeable ? ios::out|ios::in : ios::in)|ios::binary;
     auto file = get_file_idx(mode, idx);
@@ -3175,6 +3236,7 @@ file_memory_access get_file_memory_access(uint8_t idx, bool writeable = false, u
         throw;
     }
 }
+#endif // HAS_FILESYSTEM
 
 const char *cpu_name(unsigned int cpu) {
     if (cpu == PICOBIN_IMAGE_TYPE_EXE_CPU_ARM) return "ARM";
@@ -3353,7 +3415,7 @@ static chip_t image_type_exe_chip_to_chip(uint image_type_exe_chip) {
     return (chip_t)image_type_exe_chip;
 }
 
-#if HAS_LIBUSB
+#if HAS_USB
 void info_guts(memory_access &raw_access, picoboot::connection *con) {
 #else
 void info_guts(memory_access &raw_access, void *con) {
@@ -3711,7 +3773,7 @@ void info_guts(memory_access &raw_access, void *con) {
                     if (settings.info.all) {
                         std::stringstream ss;
                         ss << hex_string(bi_bdev.address) << "-" << hex_string(bi_bdev.address + bi_bdev.size) <<
-                           " (" << ((bi_bdev.size + 1023) / 1024) << "K): " << read_string(access, bi_bdev.name);
+                           " (" << ((bi_bdev.size + 1023) / 1024) << "K): " << read_string(access, (uint32_t)(uintptr_t)bi_bdev.name);
                         string s = ss.str();
                         deferred.emplace_back([&select_group, &program_info, &info_pair, s]() {
                             select_group(program_info);
@@ -3807,13 +3869,13 @@ void info_guts(memory_access &raw_access, void *con) {
             }
         } catch (std::invalid_argument &e) {
             fos << "Error reading binary info\n";
-    #if HAS_LIBUSB
+    #if HAS_USB
         } catch (picoboot::command_failure &e) {
             if (e.get_code() != PICOBOOT_NOT_PERMITTED) throw;
             info_pair("flash size", "not determined due to access permissions");
     #endif
         }
-    #if HAS_LIBUSB
+    #if HAS_USB
         std::vector<std::pair<string,string>> device_state_pairs;
         if ((settings.info.show_device || settings.info.all) && raw_access.is_device()) {
             select_group(device_info);
@@ -3957,7 +4019,7 @@ void info_guts(memory_access &raw_access, void *con) {
             // not sure how interesting this is given the chip revision which is correlated
             // info_pair("ROM version", std::to_string(rom_version));
         }
-    #endif
+    #endif // HAS_USB
         bool first = true;
         int fr_col = fos.first_column();
         // Standardise indent for whole info printout
@@ -4221,6 +4283,7 @@ model_t get_access_model(memory_access &file_access) {
     return models::unknown;
 }
 
+#if HAS_FILESYSTEM
 uint32_t get_family_id(uint8_t file_idx) {
     uint32_t family_id = 0;
     if (settings.family_id) {
@@ -4247,7 +4310,9 @@ uint32_t get_family_id(uint8_t file_idx) {
     DEBUG_LOG("Detected family ID %s\n", family_name(family_id).c_str());;
     return family_id;
 }
+#endif // HAS_FILESYSTEM
 
+#if HAS_FILESYSTEM
 model_t get_model(uint8_t file_idx) {
     model_t model;
     if (settings.model) {
@@ -4260,8 +4325,9 @@ model_t get_model(uint8_t file_idx) {
     model->set_family_id(0);
     return model;
 }
+#endif // HAS_FILESYSTEM
 
-#if HAS_LIBUSB
+#if HAS_USB
 std::shared_ptr<vector<tuple<uint32_t, uint32_t>>> get_partitions(picoboot::connection &con) {
     picoboot_memory_access raw_access(con);
     auto model = raw_access.get_model();
@@ -4320,18 +4386,20 @@ std::shared_ptr<vector<tuple<uint32_t, uint32_t>>> get_partitions(picoboot::conn
 
     return std::make_shared<vector<tuple<uint32_t, uint32_t>>>(ret);
 }
-#endif
+#endif // HAS_USB
 
 bool config_command::execute(device_map &devices) {
     fos.first_column(0); fos.hanging_indent(0);
 
+#if HAS_FILESYSTEM
     if (!settings.filenames[0].empty()) {
         auto raw_access = get_file_memory_access(0, true);
         fos << "File " << settings.filenames[0] << ":\n\n";
         config_guts(raw_access);
         return false;
     }
-#if HAS_LIBUSB
+#endif // HAS_FILESYSTEM
+#if HAS_USB
     int size = devices[dr_vidpid_bootrom_ok].size();
     if (size) {
         if (size > 1) {
@@ -4371,17 +4439,20 @@ bool config_command::execute(device_map &devices) {
     } else {
         fail(ERROR_NO_DEVICE, missing_device_string(false));
     }
-#endif
+#endif // HAS_USB
     return false;
 }
 
+#if HAS_FILESYSTEM
 void set_model_from_metadata(file_memory_access& access) {
     auto model = get_access_model(access);
     access.set_model(model);
 }
+#endif // HAS_FILESYSTEM
 
 bool info_command::execute(device_map &devices) {
     fos.first_column(0); fos.hanging_indent(0);
+#if HAS_FILESYSTEM
     if (!settings.filenames[0].empty()) {
         uint32_t next_id = 0;
         auto access = get_file_memory_access(0, false, &next_id);
@@ -4413,7 +4484,8 @@ bool info_command::execute(device_map &devices) {
         }
         return false;
     }
-#if HAS_LIBUSB
+#endif // HAS_FILESYSTEM
+#if HAS_USB
     int size = devices[dr_vidpid_bootrom_ok].size();
     if (size) {
         if (size > 1) {
@@ -4489,16 +4561,16 @@ bool info_command::execute(device_map &devices) {
     } else {
         fail(ERROR_NO_DEVICE, missing_device_string(false));
     }
-#endif
+#endif // HAS_USB
     return false;
 }
 
-#if HAS_LIBUSB
+#if HAS_USB
 static picoboot::connection get_single_bootsel_device_connection(device_map& devices, bool exclusive = true) {
     assert(devices[dr_vidpid_bootrom_ok].size() == 1);
     auto device = devices[dr_vidpid_bootrom_ok][0];
     selected_chip = std::get<0>(device);
-    libusb_device_handle *rc = std::get<2>(device);
+    usb_device_t rc = std::get<2>(device);
     if (!rc) fail(ERROR_USB, "Unable to connect to device");
     return picoboot::connection(rc, exclusive);
 }
@@ -4513,7 +4585,7 @@ static picoboot::connection get_single_picoboot_cmd_compatible_device_connection
     }
     return con;
 }
-#endif
+#endif // HAS_USB
 
 struct progress_bar {
     explicit progress_bar(string new_prefix, int width = 30) : width(width) {
@@ -4550,7 +4622,7 @@ struct progress_bar {
     int width;
 };
 
-#if HAS_LIBUSB
+#if HAS_USB
 vector<range> get_coalesced_ranges(iostream_memory_access &file_access, model_t model) {
     auto rmap = file_access.get_rmap();
     auto ranges = rmap.ranges();
@@ -4578,6 +4650,7 @@ vector<range> get_coalesced_ranges(iostream_memory_access &file_access, model_t 
     return ranges;
 }
 
+#if HAS_FILESYSTEM
 bool save_command::execute(device_map &devices) {
     auto con = get_single_bootsel_device_connection(devices);
     picoboot_memory_access raw_access(con);
@@ -4755,6 +4828,7 @@ bool save_command::execute(device_map &devices) {
     }
     return false;
 }
+#endif // HAS_FILESYSTEM
 
 bool erase_command::execute(device_map &devices) {
     auto con = get_single_bootsel_device_connection(devices);
@@ -4827,9 +4901,7 @@ bool erase_command::execute(device_map &devices) {
     std::cout << "Erased " << size << " bytes\n";
     return false;
 }
-#endif
 
-#if HAS_LIBUSB
 bool get_target_partition(picoboot::connection &con, uint32_t* start = nullptr, uint32_t* end = nullptr) {
     picoboot_memory_access raw_access(con);
     auto model = raw_access.get_model();
@@ -5057,6 +5129,7 @@ bool load_guts(picoboot::connection con, iostream_memory_access &file_access) {
     return false;
 }
 
+#if HAS_FILESYSTEM
 bool load_command::execute(device_map &devices) {
     auto con = get_single_bootsel_device_connection(devices);
     picoboot_memory_access raw_access(con);
@@ -5104,7 +5177,8 @@ bool load_command::execute(device_map &devices) {
     bool ret = load_guts(con, file_access);
     return ret;
 }
-#endif
+#endif // HAS_FILESYSTEM
+#endif // HAS_USB
 
 
 static uint32_t even_parity(uint32_t input) {
@@ -5131,13 +5205,14 @@ uint32_t __noinline otp_calculate_ecc(uint16_t x) {
 void sign_guts_elf(elf_file* elf, private_t private_key, public_t public_key, model_t model) {
     std::unique_ptr<block> first_block = find_first_block(elf);
     if (!first_block) {
+#if HAS_FILESYSTEM
         // Throw a clearer error for RP2040 binaries with no block loop
         auto family_id = get_family_id(0);
         if (family_id == RP2040_FAMILY_ID) {
             fail(ERROR_FORMAT, "No metadata block found when sealing RP2040 binary - either use RP2350, or set PICO_CRT0_INCLUDE_PICOBIN_BLOCK=1");
-        } else {
+        } else
+#endif // HAS_FILESYSTEM
             fail(ERROR_FORMAT, "No metadata block found");
-        }
     }
 
     // Workaround RP2350-E13, which means when using rollback versions, all other blocks must be set as ignored
@@ -5224,13 +5299,14 @@ vector<uint8_t> sign_guts_bin(iostream_memory_access in, private_t private_key, 
 
     std::unique_ptr<block> first_block = find_first_block(bin, bin_start);
     if (!first_block) {
+#if HAS_FILESYSTEM
         // Throw a clearer error for RP2040 binaries with no block loop
         auto family_id = get_family_id(0);
         if (family_id == RP2040_FAMILY_ID) {
             fail(ERROR_FORMAT, "No metadata block found when sealing RP2040 binary - either use RP2350, or set PICO_CRT0_INCLUDE_PICOBIN_BLOCK");
-        } else {
+        } else
+#endif // HAS_FILESYSTEM
             fail(ERROR_FORMAT, "No metadata block found");
-        }
     }
 
     // Workaround RP2350-E13, which means when using rollback versions, all other blocks must be set as ignored
@@ -5292,6 +5368,7 @@ vector<uint8_t> sign_guts_bin(iostream_memory_access in, private_t private_key, 
     return sig_data;
 }
 
+#if HAS_FILESYSTEM
 bool encrypt_command::execute(device_map &devices) {
     bool isElf = false;
     bool isBin = false;
@@ -5738,7 +5815,7 @@ bool encrypt_command::execute(device_map &devices) {
             otp_json[ss.str()]["ecc"] = true;
             otp_json[ss.str()]["value"][i] = iv_salt[i];
         }
-    #endif
+    #endif // FIB_WORKAROUND
 
         // Add page locks to prevent BL and NS access, and only allow S reads
         {
@@ -5905,8 +5982,10 @@ bool seal_command::execute(device_map &devices) {
 
     return false;
 }
-#endif
+#endif // HAS_FILESYSTEM
+#endif // HAS_MBEDTLS
 
+#if HAS_FILESYSTEM
 bool link_command::execute(device_map &devices) {
     if (get_file_type() != filetype::bin) {
         fail(ERROR_ARGS, "Can only link to BINs");
@@ -6017,8 +6096,9 @@ bool link_command::execute(device_map &devices) {
 
     return false;
 }
+#endif // HAS_FILESYSTEM
 
-#if HAS_LIBUSB
+#if HAS_USB && HAS_FILESYSTEM
 bool verify_command::execute(device_map &devices) {
     auto file_access = get_file_memory_access(0);
     auto con = get_single_bootsel_device_connection(devices);
@@ -6127,7 +6207,7 @@ bool verify_command::execute(device_map &devices) {
     }
     return false;
 }
-#endif
+#endif // HAS_USB && HAS_FILESYSTEM
 
 bool get_json_bcd(json value, int& out) {
     int tmp = 0;
@@ -6396,7 +6476,7 @@ std::map<std::pair<uint32_t,uint32_t>, otp_match> filter_otp(std::vector<string>
 }
 
 
-#if HAS_LIBUSB
+#if HAS_USB
 bool partition_info_command::execute(device_map &devices) {
     auto con = get_single_picoboot_cmd_compatible_device_connection("partition info", devices, {PC_GET_INFO}, false);
 
@@ -6506,7 +6586,7 @@ bool partition_info_command::execute(device_map &devices) {
     }
     return false;
 }
-#endif
+#endif // HAS_USB
 
 uint32_t permissions_to_flags(json permissions) {
     uint32_t ret = 0;
@@ -6560,6 +6640,7 @@ uint32_t families_to_flags(std::vector<string> families, bool fail_invalid = fal
 }
 
 bool partition_create_command::execute(device_map &devices) {
+#if HAS_FILESYSTEM
     if (get_file_type_idx(0) != filetype::json) {
         fail(ERROR_ARGS, "json must be a json file\n");
     }
@@ -6760,9 +6841,12 @@ bool partition_create_command::execute(device_map &devices) {
     }
     out->close();
     return false;
+#else
+    return false;
+#endif // HAS_FILESYSTEM
 }
 
-#if HAS_LIBUSB
+#if HAS_USB
 bool uf2_info_command::execute(device_map &devices) {
     auto con = get_single_picoboot_cmd_compatible_device_connection("uf2 info", devices, {PC_GET_INFO}, false);
     uint32_t buf[5];
@@ -6808,13 +6892,14 @@ bool uf2_info_command::execute(device_map &devices) {
     }
     return false;
 }
-#endif
+#endif // HAS_USB
 
 
 #ifndef count_of
 #define count_of(x) (sizeof(x) / sizeof((x)[0]))
 #endif
 
+#if HAS_FILESYSTEM
 bool uf2_convert_command::execute(device_map &devices) {
     if (get_file_type_idx(1) != filetype::uf2) {
         fail(ERROR_ARGS, "Output must be a UF2 file\n");
@@ -7588,8 +7673,9 @@ bool coprodis_command::execute(device_map &devices) {
     }
     return false;
 }
+#endif // HAS_FILESYSTEM
 
-#if HAS_LIBUSB
+#if HAS_USB
 static void check_otp_write_error(picoboot::command_failure &e, struct picoboot_otp_cmd *otp_cmd, model_t model) {
     if (e.get_code() == PICOBOOT_UNSUPPORTED_MODIFICATION) {
         if (otp_cmd->bEcc) fail(ERROR_NOT_POSSIBLE, "Attempted to modify OTP ECC row(s)\n");
@@ -7954,6 +8040,7 @@ bool otp_dump_command::execute(device_map &devices) {
     std::map<int, string> page_errors;
     std::map<int, string> row_errors;
 
+#if HAS_FILESYSTEM
     if (!settings.filenames[0].empty()) {
         std::shared_ptr<std::fstream> file = get_file(ios::in|ios::binary);
         if (get_file_type() != filetype::json) {
@@ -7989,7 +8076,9 @@ bool otp_dump_command::execute(device_map &devices) {
             }
         );
         fos_ptr = fos_base_ptr;
-    } else {
+    } else
+#endif // HAS_FILESYSTEM
+    {
         auto con = get_single_picoboot_cmd_compatible_device_connection("otp dump", devices, {PC_OTP_READ}, false);
         struct picoboot_otp_cmd otp_cmd;
         otp_cmd.bEcc = do_ecc;
@@ -8026,12 +8115,15 @@ bool otp_dump_command::execute(device_map &devices) {
 
     fos.first_column(0);
 
+#if HAS_FILESYSTEM
     if (!settings.filenames[1].empty()) {
         fos << "Outputting to " << settings.filenames[1] << "\n";
         std::shared_ptr<std::fstream> file = get_file_idx(ios::out|ios::binary, 1);
         file->write((char*)raw_buffer.data(), raw_buffer.size());
         file->close();
-    } else {
+    } else
+#endif // HAS_FILESYSTEM
+    {
         char buf[256];
         for(int i=0;i<OTP_ROW_COUNT;i+=8) {
             if (settings.otp.dump_pages) {
@@ -8058,6 +8150,7 @@ bool otp_dump_command::execute(device_map &devices) {
     return false;
 }
 
+#if HAS_FILESYSTEM
 bool otp_load_command::execute(device_map &devices) {
     auto con = get_single_picoboot_cmd_compatible_device_connection("otp load", devices, {PC_OTP_READ, PC_OTP_WRITE});
     picoboot_memory_access raw_access(con);
@@ -8125,7 +8218,8 @@ bool otp_load_command::execute(device_map &devices) {
     }
     return false;
 }
-#endif
+#endif // HAS_FILESYSTEM
+#endif // HAS_USB
 
 bool otp_list_command::execute(device_map &devices) {
     init_otp(otp_regs, settings.otp.extra_files);
@@ -8209,7 +8303,7 @@ bool otp_list_command::execute(device_map &devices) {
     return false;
 }
 
-#if HAS_LIBUSB
+#if HAS_USB
 bool otp_set_command::execute(device_map &devices) {
     auto con = get_single_picoboot_cmd_compatible_device_connection("otp set", devices, {PC_OTP_READ, PC_OTP_WRITE});
     hack_init_otp_regs();
@@ -8357,6 +8451,7 @@ bool otp_set_command::execute(device_map &devices) {
 }
 
 bool otp_permissions_command::execute(device_map &devices) {
+#if HAS_FILESYSTEM
     auto con = get_single_picoboot_cmd_compatible_device_connection("otp permissions", devices, {PC_OTP_READ, PC_OTP_WRITE});
     picoboot_memory_access raw_access(con);
     auto model = raw_access.get_model();
@@ -8452,6 +8547,9 @@ bool otp_permissions_command::execute(device_map &devices) {
     // todo: read back after reboot (requires lots of stuff)
 
     return true;
+#else
+    return false;
+#endif // HAS_FILESYSTEM
 }
 
 enum wl_type {
@@ -8508,6 +8606,7 @@ void wl_do_field(json json_data, vector<uint16_t>& data, uint32_t& flags, const 
 }
 
 bool otp_white_label_command::execute(device_map &devices) {
+#if HAS_FILESYSTEM
     auto con = get_single_picoboot_cmd_compatible_device_connection("otp white-label", devices, {PC_OTP_READ, PC_OTP_WRITE});
     hack_init_otp_regs();
     picoboot_memory_access raw_access(con);
@@ -8632,8 +8731,11 @@ bool otp_white_label_command::execute(device_map &devices) {
     }
 
     return false;
+#else
+    return false;
+#endif // HAS_FILESYSTEM
 }
-#endif
+#endif // HAS_USB
 
 
 #if HAS_LIBUSB
@@ -8672,7 +8774,17 @@ static int reboot_device(libusb_device *device, libusb_device_handle *dev_handle
     fail(ERROR_USB, "Unable to locate reset interface on the device");
     return -1;
 }
+#elif USE_TINYUSB
+static int reboot_device(usb_device_t dev, usb_device_t dev_handle, bool bootsel, unsigned int disable_mask=0) {
+    (void)dev;
+    if (settings.led >= 0 && bootsel) {
+        disable_mask |= (settings.led << 9u) | (settings.active_low << 7u) | (1u << 8u);
+    }
+    return usb_tinyusb_reboot_device(dev_handle, bootsel, disable_mask);
+}
+#endif
 
+#if HAS_USB
 bool reboot_command::execute(device_map &devices) {
     if (settings.force) {
         if (!settings.switch_cpu.empty()) {
@@ -8756,7 +8868,7 @@ bool reboot_command::execute(device_map &devices) {
     }
     return true;
 }
-#endif
+#endif // HAS_USB
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -8774,6 +8886,7 @@ bool reboot_command::execute(device_map &devices) {
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
+#if !PICO_ON_DEVICE
 static void sleep_ms(int ms) {
 #if defined(__unix__) || defined(__APPLE__)
     usleep(ms * 1000);
@@ -8781,6 +8894,7 @@ static void sleep_ms(int ms) {
     Sleep(ms);
 #endif
 }
+#endif // !PICO_ON_DEVICE
 
 void get_terminal_size(int& width, int& height) {
 #if defined(DOCS_WIDTH)
@@ -8809,7 +8923,11 @@ void cancelled(int) {
     throw cancelled_exception();
 }
 
+#if USE_TINYUSB
+int picotool_main(int argc, char **argv) {
+#else
 int main(int argc, char **argv) {
+#endif
     int tw=0, th=0;
     get_terminal_size(tw, th);
     if (tw) {
@@ -8834,7 +8952,7 @@ int main(int argc, char **argv) {
 
     struct libusb_device **devs = nullptr;
     device_map devices;
-    vector<libusb_device_handle *> to_close;
+    vector<usb_device_t> to_close;
 
     try {
         signal(SIGINT, cancelled);
@@ -9072,11 +9190,164 @@ int main(int argc, char **argv) {
     if (devs) libusb_free_device_list(devs, 1);
     if (ctx) libusb_exit(ctx);
 
+#elif USE_TINYUSB
+    // TinyUSB on-device path.
+    // The application must have already called tuh_init() before main() or
+    // before invoking picotool commands.
+
+    if (settings.force_no_reboot) settings.force = true;
+
+    device_map devices;
+
+    try {
+        if (settings.reboot_usb && settings.reboot_app_specified) {
+            fail(ERROR_ARGS, "Cannot specify both -u and -a reboot options");
+        }
+
+        for (int tries = 0; !rc && tries <= MAX_REBOOT_TRIES; tries++) {
+            if (selected_cmd->get_device_support() != cmd::none) {
+                // Drive the TinyUSB stack until a device appears or we time out.
+                // USB enumeration takes many task iterations (100–500 ms typically).
+                {
+                    uint32_t start_us = time_us_32();
+                    while (time_us_32() - start_us < 5000000u) {
+                        tuh_task();
+                        usb_tinyusb_task();
+                        if (usb_tinyusb_get_daddr() != 0 || usb_tinyusb_get_stdio_daddr() != 0) break;
+                    }
+                }
+                devices.clear();
+                for (uint8_t daddr = 1; daddr <= CFG_TUH_DEVICE_MAX; daddr++) {
+                    if (usb_tinyusb_is_mounted(daddr)) {
+                        chip_t chip = usb_tinyusb_is_rp2350(daddr) ? rp2350 : rp2040;
+                        devices[dr_vidpid_bootrom_ok].emplace_back(
+                            std::make_tuple(chip, (usb_device_t)daddr, (usb_device_t)daddr));
+                    }
+                    if (usb_tinyusb_is_stdio_mounted(daddr)) {
+                        chip_t chip = usb_tinyusb_is_stdio_rp2350(daddr) ? rp2350 : rp2040;
+                        devices[dr_vidpid_stdio_usb].emplace_back(
+                            std::make_tuple(chip, (usb_device_t)daddr, (usb_device_t)daddr));
+                    }
+                }
+            }
+
+            auto supported = selected_cmd->get_device_support();
+            switch (supported) {
+                case cmd::device_support::zero_or_more:
+                    if (!settings.filenames[0].empty()) break;
+                    // fall thru
+                case cmd::device_support::one:
+                    if (devices[dr_vidpid_bootrom_ok].empty() &&
+                        (!settings.force || devices[dr_vidpid_stdio_usb].empty())) {
+                        if (tries == 0 || tries == MAX_REBOOT_TRIES) {
+                            if (tries) fos << "\n\n";
+                            fos << missing_device_string(tries > 0, selected_cmd->requires_rp2350());
+                            if (tries) {
+                                fos << " It is possible the device is not responding, and will have to be manually entered into BOOTSEL mode.\n";
+                            }
+                            fos << "\n";
+                            fos.first_column(0);
+                            fos.hanging_indent(4);
+                            auto printer = [&](enum picoboot_device_result r, const string &description) {
+                                for (auto d : devices[r]) {
+                                    fos << bus_device_string(std::get<1>(d), std::get<0>(d)) << description << "\n";
+                                }
+                            };
+                            if (selected_cmd->force_requires_pre_reboot()) {
+                                printer(dr_vidpid_stdio_usb,
+                                        " appears to have a USB connection, so consider -f (or -F) to force reboot in order to run the command.");
+                            } else {
+                                printer(dr_vidpid_stdio_usb,
+                                        " appears to have a USB connection, so consider -f to force the reboot.");
+                            }
+                            rc = ERROR_NO_DEVICE;
+                        } else {
+                            break;
+                        }
+                    } else if (supported == cmd::device_support::one) {
+                        if (devices[dr_vidpid_bootrom_ok].size() > 1 ||
+                            (devices[dr_vidpid_bootrom_ok].empty() && devices[dr_vidpid_stdio_usb].size() > 1)) {
+                            fail(ERROR_NOT_POSSIBLE, "Command requires a single RP-series device to be targeted.");
+                        }
+                        if (!devices[dr_vidpid_bootrom_ok].empty()) {
+                            settings.force = false;
+                        }
+                    } else if (supported == cmd::device_support::zero_or_more && settings.force && !devices[dr_vidpid_bootrom_ok].empty()) {
+                        settings.force = false;
+                    }
+                    fos.first_column(0);
+                    fos.hanging_indent(0);
+                    break;
+                default:
+                    break;
+            }
+
+            if (!rc) {
+                if (settings.force) {
+                    if (devices[dr_vidpid_stdio_usb].size() != 1 && !tries) {
+                        fail(ERROR_NOT_POSSIBLE,
+                             "Forced command requires a single rebootable RP-series device to be targeted.");
+                    }
+                    if (selected_cmd->force_requires_pre_reboot()) {
+                        if (!tries) {
+                            auto &to_reboot        = std::get<1>(devices[dr_vidpid_stdio_usb][0]);
+                            auto &to_reboot_handle = std::get<2>(devices[dr_vidpid_stdio_usb][0]);
+                            unsigned int disable_mask = 1;  // disable MSC interface
+                            reboot_device(to_reboot, to_reboot_handle, true, disable_mask);
+                            fos << "The device was asked to reboot into BOOTSEL mode so the command can be executed.";
+                        } else if (tries == 1) {
+                            fos << "\nWaiting for device to reboot";
+                        } else {
+                            fos << "...";
+                        }
+                        fos.flush();
+                        devices.clear();
+                        // Pump TinyUSB for up to 3 s, stopping early when a PICOBOOT device appears.
+                        {
+                            uint32_t start_us = time_us_32();
+                            while (time_us_32() - start_us < 3000000u) {
+                                tuh_task();
+                                usb_tinyusb_task();
+                                if (usb_tinyusb_get_daddr() != 0) break;
+                            }
+                        }
+                        continue;
+                    }
+                }
+                if (tries) fos << "\n\n";
+                if (!selected_cmd->execute(devices) && tries) {
+                    if (settings.force_no_reboot) {
+                        fos << "\nThe device has been left accessible, but without the drive mounted; use 'picotool reboot' to reboot into regular BOOTSEL mode or application mode.\n";
+                    } else {
+                        if (devices[dr_vidpid_bootrom_ok].size() == 1) {
+                            reboot_cmd->quiet = true;
+                            reboot_cmd->execute(devices);
+                            fos << "\nThe device was asked to reboot back into application mode.\n";
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    } catch (failure_error &e) {
+        std::cout << "ERROR: " << e.what() << "\n";
+        rc = e.code();
+    } catch (picoboot::command_failure& e) {
+        std::cout << "ERROR: The " << chip_name(selected_chip) << " device returned an error: " << e.what() << "\n";
+        rc = ERROR_UNKNOWN;
+    } catch (picoboot::connection_error&) {
+        std::cout << "ERROR: Communication with " << chip_name(selected_chip) << " device failed\n";
+        rc = ERROR_CONNECTION;
+    } catch (std::exception &e) {
+        std::cout << "ERROR: " << e.what() << "\n";
+        rc = ERROR_UNKNOWN;
+    }
+
 #else
     device_map devices;
 
     if (selected_cmd->get_device_support() != cmd::none) {
-        fail(ERROR_USB, "No libUSB\n");
+        fail(ERROR_USB, "No USB stack available\n");
     }
     try {
         rc = selected_cmd->execute(devices);
@@ -9089,7 +9360,7 @@ int main(int argc, char **argv) {
         std::cout << "ERROR: " << e.what() << "\n";
         rc = ERROR_UNKNOWN;
     }
-#endif
+#endif // HAS_LIBUSB
 
     return rc;
 }

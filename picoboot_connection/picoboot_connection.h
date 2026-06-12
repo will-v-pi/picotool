@@ -7,11 +7,10 @@
 #ifndef _PICOBOOT_CONNECTION_H
 #define _PICOBOOT_CONNECTION_H
 
-// todo we should use fully encapsulate libusb
-
 #include <assert.h>
-#if HAS_LIBUSB
-#include <libusb.h>
+#include "usb_transport.h"
+#if PICO_ON_DEVICE
+#include "pico.h"
 #endif
 #include "boot/picoboot.h"
 #include "model.h"
@@ -43,29 +42,32 @@ enum picoboot_device_result {
 
 #if HAS_LIBUSB
 // note that vid and pid are filters, unless both are specified in which case a device with that VID and PID is allowed for RP2350
-enum picoboot_device_result picoboot_open_device(libusb_device *device, libusb_device_handle **dev_handle, chip_t *chip, int vid, int pid, const char* ser);
-
-int picoboot_reset(libusb_device_handle *usb_device);
-int picoboot_cmd_status_verbose(libusb_device_handle *usb_device, struct picoboot_cmd_status *status,
-                                bool local_verbose);
-int picoboot_cmd_status(libusb_device_handle *usb_device, struct picoboot_cmd_status *status);
-int picoboot_exclusive_access(libusb_device_handle *usb_device, uint8_t exclusive);
-int picoboot_enter_cmd_xip(libusb_device_handle *usb_device);
-int picoboot_exit_xip(libusb_device_handle *usb_device);
-int picoboot_reboot(libusb_device_handle *usb_device, uint32_t pc, uint32_t sp, uint32_t delay_ms);
-int picoboot_reboot2(libusb_device_handle *usb_device, struct picoboot_reboot2_cmd *reboot_cmd);
-int picoboot_get_info(libusb_device_handle *usb_device, struct picoboot_get_info_cmd *cmd, uint8_t *buffer, uint32_t len);
-int picoboot_exec(libusb_device_handle *usb_device, uint32_t addr);
-int picoboot_flash_erase(libusb_device_handle *usb_device, uint32_t addr, uint32_t len);
-int picoboot_vector(libusb_device_handle *usb_device, uint32_t addr);
-int picoboot_write(libusb_device_handle *usb_device, uint32_t addr, uint8_t *buffer, uint32_t len);
-int picoboot_read(libusb_device_handle *usb_device, uint32_t addr, uint8_t *buffer, uint32_t len);
-int picoboot_otp_write(libusb_device_handle *usb_device, struct picoboot_otp_cmd *otp_cmd, uint8_t *buffer, uint32_t len);
-int picoboot_otp_read(libusb_device_handle *usb_device, struct picoboot_otp_cmd *otp_cmd, uint8_t *buffer, uint32_t len);
-int picoboot_poke(libusb_device_handle *usb_device, uint32_t addr, uint32_t data);
-int picoboot_peek(libusb_device_handle *usb_device, uint32_t addr, uint32_t *data);
-int picoboot_flash_id(libusb_device_handle *usb_device, uint64_t *data);
+// libusb_device * is used for enumeration only; the resulting handle is a usb_device_t.
+#include <libusb.h>
+enum picoboot_device_result picoboot_open_device(libusb_device *device, usb_device_t *dev_handle, chip_t *chip, int vid, int pid, const char* ser);
 #endif
+
+// Commands — all accept usb_device_t so they compile for both libusb and TinyUSB.
+int picoboot_reset(usb_device_t usb_device);
+int picoboot_cmd_status_verbose(usb_device_t usb_device, struct picoboot_cmd_status *status,
+                                bool local_verbose);
+int picoboot_cmd_status(usb_device_t usb_device, struct picoboot_cmd_status *status);
+int picoboot_exclusive_access(usb_device_t usb_device, uint8_t exclusive);
+int picoboot_enter_cmd_xip(usb_device_t usb_device);
+int picoboot_exit_xip(usb_device_t usb_device);
+int picoboot_reboot(usb_device_t usb_device, uint32_t pc, uint32_t sp, uint32_t delay_ms);
+int picoboot_reboot2(usb_device_t usb_device, struct picoboot_reboot2_cmd *reboot_cmd);
+int picoboot_get_info(usb_device_t usb_device, struct picoboot_get_info_cmd *cmd, uint8_t *buffer, uint32_t len);
+int picoboot_exec(usb_device_t usb_device, uint32_t addr);
+int picoboot_flash_erase(usb_device_t usb_device, uint32_t addr, uint32_t len);
+int picoboot_vector(usb_device_t usb_device, uint32_t addr);
+int picoboot_write(usb_device_t usb_device, uint32_t addr, uint8_t *buffer, uint32_t len);
+int picoboot_read(usb_device_t usb_device, uint32_t addr, uint8_t *buffer, uint32_t len);
+int picoboot_otp_write(usb_device_t usb_device, struct picoboot_otp_cmd *otp_cmd, uint8_t *buffer, uint32_t len);
+int picoboot_otp_read(usb_device_t usb_device, struct picoboot_otp_cmd *otp_cmd, uint8_t *buffer, uint32_t len);
+int picoboot_poke(usb_device_t usb_device, uint32_t addr, uint32_t data);
+int picoboot_peek(usb_device_t usb_device, uint32_t addr, uint32_t *data);
+int picoboot_flash_id(usb_device_t usb_device, uint64_t *data);
 
 // we require 256 (as this is the page size supported by the device)
 #define LOG2_PAGE_SIZE 8u

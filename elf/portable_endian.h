@@ -160,7 +160,17 @@
 
 #else
 
-#	error platform not supported
+// #	error platform not supported
+// Edit: Assume little endian instead, with no big endan macros needed
+
+#		define htole16(x) (x)
+#		define le16toh(x) (x)
+ 
+#		define htole32(x) (x)
+#		define le32toh(x) (x)
+ 
+#		define htole64(x) (x)
+#		define le64toh(x) (x)
 
 #endif
 

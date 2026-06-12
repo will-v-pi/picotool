@@ -1,10 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
-
-project(picotool)
-
-if (NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
-endif()
+cmake_minimum_required(VERSION 3.13)
 
 if (DEFINED ENV{PICO_SDK_PATH} AND (NOT PICO_SDK_PATH))
     set(PICO_SDK_PATH $ENV{PICO_SDK_PATH})
@@ -23,9 +17,37 @@ if (PICO_SDK_VERSION_STRING VERSION_LESS "2.1.0")
     message(FATAL_ERROR "Raspberry Pi Pico SDK version 2.1.0 (or later) required. Your version is ${PICO_SDK_VERSION_STRING}")
 endif()
 
+if (DEFINED PICO_PLATFORM)
+    # must come before project
+    include(${PICO_SDK_PATH}/pico_sdk_init.cmake)
+endif()
+
+project(picotool)
+
+if (NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+if (DEFINED PICO_PLATFORM)
+    # these sets must come before pico_sdk_init()
+    set(PICO_CXX_ENABLE_EXCEPTIONS 1)
+    set(PICO_CXX_ENABLE_RTTI 1)
+    set(PICOTOOL_CODE_OTP 0)
+    set(USE_TINYUSB 1)
+    set(SUPPORT_USB 1)
+    pico_sdk_init()
+endif()
+
 # Set PICOTOOL_CODE_OTP to compile OTP definitions in - otherwise, they are included from JSON
 if (NOT PICOTOOL_CODE_OTP)
     set(PICOTOOL_CODE_OTP 0)
+endif()
+
+# Rename PICOTOOL_NO_LIBUSB to SKIP_USB for clarity in this file
+if (PICOTOOL_NO_LIBUSB)
+    set(SKIP_USB 1)
+else()
+    set(SKIP_USB 0)
 endif()
 
 # allow installing to flat dir
@@ -57,6 +79,14 @@ endif()
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake)
 
 add_subdirectory(lib)
+
+if (TARGET mbedtls)
+    set(HAS_MBEDTLS mbedtls)
+elseif(TARGET pico_mbedtls)
+    set(HAS_MBEDTLS pico_mbedtls)
+else()
+    set(HAS_MBEDTLS 0)
+endif()
 
 if (NOT DEFINED USE_PRECOMPILED)
     set(USE_PRECOMPILED true)
@@ -102,12 +132,12 @@ add_embedded_data_project(enc_bootloader
 
 set(ENC_BOOTLOADER_ELF ${CMAKE_BINARY_DIR}/enc_bootloader/enc_bootloader.elf)
 
-if (TARGET mbedtls)
+if (HAS_MBEDTLS)
     add_embedded_data_project(enc_bootloader_mbedtls
             PREFIX enc_bootloader_mbedtls
             SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/enc_bootloader
             BINARY_DIR ${CMAKE_BINARY_DIR}/enc_bootloader_mbedtls
-            CMAKE_ARGS 
+            CMAKE_ARGS
                 "-DCMAKE_MAKE_PROGRAM:FILEPATH=${CMAKE_MAKE_PROGRAM}"
                 "-DPICO_SDK_PATH:FILEPATH=${PICO_SDK_PATH}"
                 "-DUSE_PRECOMPILED:BOOL=${USE_PRECOMPILED}"
@@ -118,7 +148,7 @@ if (TARGET mbedtls)
     set(ENC_BOOTLOADER_MBEDTLS_ELF ${CMAKE_BINARY_DIR}/enc_bootloader_mbedtls/enc_bootloader.elf)
 endif()
 
-if (NOT PICOTOOL_NO_LIBUSB)
+if (NOT SKIP_USB)
     # compile xip_ram_perms.elf
     add_embedded_data_project(xip_ram_perms
             PREFIX xip_ram_perms
@@ -207,7 +237,7 @@ if (NOT PICOTOOL_NO_LIBUSB)
     endif()
 endif()
 
-if (TARGET mbedtls)
+if (HAS_MBEDTLS)
     add_custom_target(embedded_data_no_libusb DEPENDS
             ${CMAKE_CURRENT_BINARY_DIR}/enc_bootloader_elf.h
             ${CMAKE_CURRENT_BINARY_DIR}/enc_bootloader_mbedtls_elf.h)
@@ -261,23 +291,27 @@ add_subdirectory(elf2uf2)
 
 add_subdirectory(bintool)
 
-if (NOT PICOTOOL_NO_LIBUSB)
-    find_package(LIBUSB)
+if (NOT SKIP_USB)
+    if (NOT PICO_ON_DEVICE)
+        find_package(LIBUSB)
+    endif()
     set(OTP_EXE otp.cpp)
 else()
     set(OTP_EXE no_otp.cpp)
 endif()
 
-add_subdirectory(${PICO_SDK_PATH}/src/common/pico_binary_info pico_binary_info)
-add_subdirectory(${PICO_SDK_PATH}/src/common/boot_uf2_headers boot_uf2_headers)
-add_subdirectory(${PICO_SDK_PATH}/src/common/boot_picoboot_headers boot_picoboot_headers)
-add_subdirectory(${PICO_SDK_PATH}/src/common/boot_picobin_headers boot_picobin_headers)
-add_subdirectory(${PICO_SDK_PATH}/src/common/pico_usb_reset_interface_headers pico_usb_reset_interface_headers)
-add_subdirectory(${PICO_SDK_PATH}/src/rp2_common/boot_bootrom_headers boot_bootrom_headers)
-add_subdirectory(${PICO_SDK_PATH}/src/host/pico_platform pico_platform)
+if (NOT PICO_ON_DEVICE)
+    add_subdirectory(${PICO_SDK_PATH}/src/common/pico_binary_info pico_binary_info)
+    add_subdirectory(${PICO_SDK_PATH}/src/common/boot_uf2_headers boot_uf2_headers)
+    add_subdirectory(${PICO_SDK_PATH}/src/common/boot_picoboot_headers boot_picoboot_headers)
+    add_subdirectory(${PICO_SDK_PATH}/src/common/boot_picobin_headers boot_picobin_headers)
+    add_subdirectory(${PICO_SDK_PATH}/src/common/pico_usb_reset_interface_headers pico_usb_reset_interface_headers)
+    add_subdirectory(${PICO_SDK_PATH}/src/rp2_common/boot_bootrom_headers boot_bootrom_headers)
+    add_subdirectory(${PICO_SDK_PATH}/src/host/pico_platform pico_platform)
 
-add_library(regs_headers INTERFACE)
-target_include_directories(regs_headers INTERFACE ${PICO_SDK_PATH}/src/rp2350/hardware_regs/include)
+    add_library(regs_headers INTERFACE)
+    target_include_directories(regs_headers INTERFACE ${PICO_SDK_PATH}/src/rp2350/hardware_regs/include)
+endif()
 
 # Main picotool executable
 add_executable(picotool
@@ -286,7 +320,7 @@ add_executable(picotool
     ${OTP_EXE}
     main.cpp)
 add_dependencies(picotool embedded_data_no_libusb)
-if (NOT PICOTOOL_NO_LIBUSB)
+if (NOT SKIP_USB)
     target_sources(picotool PRIVATE get_xip_ram_perms.cpp)
     add_dependencies(picotool generate_otp_header embedded_data)
 endif()
@@ -309,22 +343,37 @@ target_link_libraries(picotool
         boot_picoboot_headers
         boot_picobin_headers
         boot_bootrom_headers
-        pico_platform_headers
         pico_usb_reset_interface_headers
-        regs_headers
         model
         bintool
         elf2uf2
         errors
-        nlohmann_json
-        whereami)
+        nlohmann_json)
 
-if (NOT TARGET mbedtls)
+if (DEFAULT_BOOTSEL_LED)
+    target_compile_definitions(picotool PRIVATE DEFAULT_BOOTSEL_LED=${DEFAULT_BOOTSEL_LED})
+endif()
+
+if (GENERATE_FIXED_DOCS_WIDTH)
+    target_compile_definitions(picotool PRIVATE DOCS_WIDTH=140)
+endif()
+
+if (NOT HAS_MBEDTLS)
     message("mbedtls not found - no signing/hashing support will be built")
     target_compile_definitions(picotool PRIVATE HAS_MBEDTLS=0)
 else()
     target_compile_definitions(picotool PRIVATE HAS_MBEDTLS=1)
 endif()
+
+if (PICO_ON_DEVICE)
+    include(on_device/on_device.cmake)
+    return() # everything below is for desktop build only
+endif()
+
+target_link_libraries(picotool
+        pico_platform_headers
+        regs_headers
+        whereami)
 
 if (NOT LIBUSB_FOUND)
     if (PICOTOOL_NO_LIBUSB)
@@ -333,22 +382,14 @@ if (NOT LIBUSB_FOUND)
         message("libUSB is not found - no USB support will be built")
     endif()
     target_compile_definitions(picotool PRIVATE HAS_LIBUSB=0)
-    target_link_libraries(picotool 
+    target_link_libraries(picotool
         picoboot_connection_header)
 else()
     target_include_directories(picotool PRIVATE ${LIBUSB_INCLUDE_DIR})
     target_compile_definitions(picotool PRIVATE HAS_LIBUSB=1)
-    target_link_libraries(picotool 
+    target_link_libraries(picotool
         picoboot_connection_cxx
         ${LIBUSB_LIBRARIES})
-endif()
-
-if (DEFAULT_BOOTSEL_LED)
-    target_compile_definitions(picotool PRIVATE DEFAULT_BOOTSEL_LED=${DEFAULT_BOOTSEL_LED})
-endif()
-
-if (GENERATE_FIXED_DOCS_WIDTH)
-    target_compile_definitions(picotool PRIVATE DOCS_WIDTH=140)
 endif()
 
 # allow `make install`
@@ -392,7 +433,7 @@ install(FILES
     DESTINATION ${INSTALL_DATADIR}
 )
 
-if (TARGET mbedtls)
+if (HAS_MBEDTLS)
     #Install enc_bootloader_mbedtls.elf
     install(FILES
         ${ENC_BOOTLOADER_MBEDTLS_ELF}
@@ -401,7 +442,7 @@ if (TARGET mbedtls)
     )
 endif()
 
-if (NOT PICOTOOL_NO_LIBUSB)
+if (NOT SKIP_USB)
     if (NOT PICOTOOL_CODE_OTP)
         #Install the otp json
         install(FILES

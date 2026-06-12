@@ -1,0 +1,53 @@
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-on-device:
+    # Prevent running twice for PRs from same repo
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    name: Build on-device version
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        generator: ["Ninja", "Unix Makefiles"]
+        mbedtls: ["mbedtls", ""]
+        exclude:
+          - os: 'windows-latest'
+            generator: "Unix Makefiles"
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install mingw (Windows mingw)
+        if: runner.os == 'Windows' && matrix.generator == 'Ninja'
+        run: |
+          choco install -y mingw --version=12.2.0
+      - name: Install arm-none-eabi-gcc (Windows & MacOS)
+        if: runner.os == 'Windows' || runner.os == 'macOS'
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: 14.3.Rel1
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ninja
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt install cmake ninja-build python3 build-essential gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+      - name: Checkout Pico SDK
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: develop
+          path: pico-sdk
+          submodules: ${{ matrix.mbedtls && 'recursive' || 'false' }}
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G "${{ matrix.generator }}" -D PICO_SDK_PATH="${{ github.workspace }}/pico-sdk" -D PICO_PLATFORM=rp2350 -D PICO_NO_PICOTOOL=1
+          cmake --build build

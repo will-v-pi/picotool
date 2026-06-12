@@ -30,7 +30,9 @@ extern "C" {
 #define IV0_XOR 1
 
 #ifdef __cplusplus
+#ifndef _Static_assert
 #define _Static_assert static_assert
+#endif
 #endif
 
 typedef struct signature {

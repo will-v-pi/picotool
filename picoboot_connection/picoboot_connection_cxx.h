@@ -22,12 +22,14 @@ namespace picoboot {
     };
 
     struct connection_error : public std::exception {
-        connection_error(int libusb_code) : libusb_code(libusb_code) {}
+        // usb_error_code holds a libusb error code on desktop builds, or -1 on TinyUSB builds.
+        // The field is named libusb_code for backward compatibility with existing catch-block code.
+        explicit connection_error(int code) : libusb_code(code) {}
         const int libusb_code;
     };
 
     struct connection {
-        explicit connection(libusb_device_handle *device, bool exclusive = true) : device(device), exclusive(exclusive) {
+        explicit connection(usb_device_t device, bool exclusive = true) : device(device), exclusive(exclusive) {
             // do a device reset in case it was left in a bad state
             reset();
             if (exclusive) exclusive_access(EXCLUSIVE);
@@ -66,7 +68,7 @@ namespace picoboot {
         }
     private:
         template <typename F> void wrap_call(F&& func);
-        libusb_device_handle *device;
+        usb_device_t device;
         bool exclusive;
     };
 

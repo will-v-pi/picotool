@@ -50,6 +50,7 @@ int read_keys(const std::string &filename, public_t *public_key, private_t *priv
     int rc;
 
     mbedtls_pk_init(&pk_ctx);
+#if defined(MBEDTLS_FS_IO)
 #if MBEDTLS_VERSION_MAJOR >= 3
     // This rng is only used for blinding when reading the key file
     // As this should only be done on a secure computer, blinding is not required, so it's fine to not actually seed it with any entropy
@@ -58,6 +59,11 @@ int read_keys(const std::string &filename, public_t *public_key, private_t *priv
     rc = mbedtls_pk_parse_keyfile(&pk_ctx, filename.c_str(), NULL, mbedtls_ctr_drbg_random, &ctr_drbg);
 #else
     rc = mbedtls_pk_parse_keyfile(&pk_ctx, filename.c_str(), NULL);
+#endif
+#else
+    (void)filename;
+    fail(ERROR_NOT_POSSIBLE, "Key file reading not supported on this platform");
+    return -1;
 #endif
     if (rc != 0) {
         char error_string[128];

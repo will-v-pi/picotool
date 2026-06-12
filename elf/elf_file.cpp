@@ -208,14 +208,14 @@ void elf_file::flatten(void) {
     eh_le(eh_out);    // swap to LE for writing
     memcpy(&elf_bytes[0], &eh_out, sizeof(eh_out));
 
-    elf_bytes.resize(std::max(eh.ph_offset + sizeof(elf32_ph_entry) * eh.ph_num, elf_bytes.size()));
+    elf_bytes.resize(std::max(eh.ph_offset + (uint32_t)sizeof(elf32_ph_entry) * eh.ph_num, (uint32_t)elf_bytes.size()));
     auto ph_entries_out = ph_entries;
     for (auto ph : ph_entries_out) {
         ph_le(ph);  // swap to LE for writing
     }
     memcpy(&elf_bytes[eh.ph_offset], &ph_entries_out[0], sizeof(elf32_ph_entry) * eh.ph_num);
 
-    elf_bytes.resize(std::max(eh.sh_offset + sizeof(elf32_sh_entry) * eh.sh_num, elf_bytes.size()));
+    elf_bytes.resize(std::max(eh.sh_offset + (uint32_t)sizeof(elf32_sh_entry) * eh.sh_num, (uint32_t)elf_bytes.size()));
     auto sh_entries_out = sh_entries;
     for (auto sh : sh_entries_out) {
         sh_le(sh);  // swap to LE for writing

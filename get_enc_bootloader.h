@@ -7,6 +7,5 @@
 #pragma once
 
 #include <memory>
-#include <fstream>
 
 std::shared_ptr<std::iostream> get_enc_bootloader(bool use_mbedtls = false);

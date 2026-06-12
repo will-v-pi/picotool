@@ -1,4 +1,4 @@
-if (NOT TARGET mbedtls)
+if (NOT HAS_MBEDTLS)
     message("lib/mbedtls submodule needs to be initialized for bintool hashing/signing")
     add_library(bintool STATIC
             bintool.cpp)
@@ -23,7 +23,7 @@ else()
     target_include_directories(bintool PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
     target_link_libraries(bintool PUBLIC
-            mbedtls
+            ${HAS_MBEDTLS} # HAS_MBEDTLS is set to the mbedtls target name
             elf
             errors
             boot_picobin_headers)

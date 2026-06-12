@@ -3,17 +3,20 @@
 #include <memory>
 #include <iostream>
 #include <sstream>
-#include <fstream>
 
 #include "get_xip_ram_perms.h"
 #include "xip_ram_perms_elf.h"
 
 #include "data_locs.h"
 
+#if !PICO_ON_DEVICE
+#include <fstream>
 #include "whereami++.h"
+#endif
 
 
 std::shared_ptr<std::iostream> get_xip_ram_perms() {
+#if !PICO_ON_DEVICE
     // search same directory as executable
     whereami::whereami_path_t executablePath = whereami::getExecutablePath();
     std::string local_loc = executablePath.dirname() + "/";
@@ -30,6 +33,7 @@ std::shared_ptr<std::iostream> get_xip_ram_perms() {
             return file;
         }
     }
+#endif // !PICO_ON_DEVICE
 
     // fall back to embedded xip_ram_perms.elf file
     printf("Could not find xip_ram_perms.elf file - using embedded binary\n");

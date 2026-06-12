@@ -3,8 +3,6 @@
 #include <memory>
 #include <iostream>
 #include <sstream>
-#include <fstream>
-
 #include "get_enc_bootloader.h"
 #include "enc_bootloader_elf.h"
 #if HAS_MBEDTLS
@@ -13,10 +11,14 @@
 
 #include "data_locs.h"
 
+#if !PICO_ON_DEVICE
+#include <fstream>
 #include "whereami++.h"
+#endif
 
 
 std::shared_ptr<std::iostream> get_enc_bootloader(bool use_mbedtls) {
+#if !PICO_ON_DEVICE
     // search same directory as executable
     whereami::whereami_path_t executablePath = whereami::getExecutablePath();
     std::string local_loc = executablePath.dirname() + "/";
@@ -36,6 +38,7 @@ std::shared_ptr<std::iostream> get_enc_bootloader(bool use_mbedtls) {
             return file;
         }
     }
+#endif // !PICO_ON_DEVICE
 
     // fall back to embedded enc_bootloader.elf file
     printf("Could not find enc_bootloader%s.elf file - using embedded binary\n", use_mbedtls ? "_mbedtls" : "");

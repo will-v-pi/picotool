@@ -33,7 +33,7 @@ elseif (NOT EXISTS "${PICO_MBEDTLS_PATH}/${MBEDTLS_TEST_PATH}")
     message(WARNING "PICO_MBEDTLS_PATH specified but content not present.")
 endif()
 
-if(EXISTS "${PICO_MBEDTLS_PATH}/${MBEDTLS_TEST_PATH}")
+if(NOT PICO_ON_DEVICE AND EXISTS "${PICO_MBEDTLS_PATH}/${MBEDTLS_TEST_PATH}")
     # Support version 2.28.8 or 3.6.2
     if (EXISTS ${PICO_MBEDTLS_PATH}/library/ssl_cli.c)
         set(MBEDTLS_VERSION_MAJOR 2)
