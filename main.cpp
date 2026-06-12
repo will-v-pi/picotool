@@ -9135,7 +9135,7 @@ int main(int argc, char **argv) {
                             auto &to_reboot_handle = std::get<2>(devices[dr_vidpid_stdio_usb][0]);
                             unsigned int disable_mask = 1;  // disable MSC interface
 #if HAS_LIBUSB
-#if defined(_WIN32)
+    #if defined(_WIN32)
                             {
                                 struct libusb_device_descriptor desc;
                                 libusb_get_device_descriptor(to_reboot, &desc);
@@ -9146,7 +9146,7 @@ int main(int argc, char **argv) {
                                     settings.force_rp2040 = true;
                                 }
                             }
-#endif
+    #endif
                             if (settings.ser.empty() && to_reboot_handle) {
                                 // store USB serial number, to pick correct device after reboot
                                 struct libusb_device_descriptor desc;
@@ -9255,7 +9255,7 @@ int main(int argc, char **argv) {
     device_map devices;
 
     if (selected_cmd->get_device_support() != cmd::none) {
-        fail(ERROR_USB, "No USB stack available\n");
+        fail(ERROR_USB, "No libUSB\n");
     }
     try {
         rc = selected_cmd->execute(devices);
