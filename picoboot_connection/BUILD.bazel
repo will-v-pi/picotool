@@ -7,10 +7,12 @@ cc_library(
     srcs = [
         "picoboot_connection.c",
         "picoboot_connection_cxx.cpp",
+        "usb_transport_libusb.c",
     ],
     hdrs = [
         "picoboot_connection.h",
         "picoboot_connection_cxx.h",
+        "usb_transport.h",
         "//:flash_id_bin.h",
     ],
     defines = ["HAS_LIBUSB=1"],  # Bazel build always has libusb.
