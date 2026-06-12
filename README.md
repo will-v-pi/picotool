@@ -10,50 +10,50 @@ PICOTOOL:
     Tool for interacting with RP-series device(s) in BOOTSEL mode, or with an RP-series binary
 
 SYNOPSIS:
+    picotool help [<cmd>]
+    picotool version [-s] [<version>]
     picotool info [-b] [-m] [-p] [-d] [--debug] [-l] [-a] [device-selection]
     picotool info [-b] [-m] [-p] [-d] [--debug] [-l] [-a] <filename> [-t <type>]
     picotool config [-s <key> <value>] [-g <group>] [device-selection]
     picotool config [-s <key> <value>] [-g <group>] <filename> [-t <type>]
     picotool load [--ignore-partitions] [--family <family_id>] [-p <partition>] [-n] [-N] [-u] [-v] [-x] <filename> [-t <type>] [-o
                 <offset>] [device-selection]
-    picotool encrypt [--quiet] [--verbose] [--embed] [--fast-rosc] [--use-mbedtls] [--otp-key-page <page>] [--hash] [--sign] [--no-clear]
-                [--pin-xip-sram] <infile> [-t <type>] [-o <offset>] <outfile> [-t <type>] <aes_key> <iv_salt> <signing_key> <otp>
-    picotool seal [--quiet] [--verbose] [--hash] [--sign] [--clear] [--pin-xip-sram] <infile> [-t <type>] [-o <offset>] <outfile> [-t
-                <type>] <key> <otp> [--major <major>] [--minor <minor>] [--rollback <rollback> [<rows>..]]
-    picotool link [--quiet] [--verbose] <outfile> [-t <type>] <infile1> [-t <type>] <infile2> [-t <type>] [<infile3>] [-t <type>] [-p <pad>]
     picotool save [-p] [-v] [--family <family_id>] <filename> [-t <type>] [device-selection]
     picotool save -a [-v] [--family <family_id>] <filename> [-t <type>] [device-selection]
     picotool save -r <from> <to> [-v] [--family <family_id>] <filename> [-t <type>] [device-selection]
+    picotool verify <filename> [-t <type>] [device-selection] [-r <from> <to>] [-o <offset>] [device-selection]
     picotool erase [-a] [device-selection]
     picotool erase -p <partition> [device-selection]
     picotool erase -r <from> <to> [device-selection]
-    picotool verify <filename> [-t <type>] [device-selection] [-r <from> <to>] [-o <offset>] [device-selection]
     picotool reboot [-a] [-u] [-g <partition>] [-c <cpu>] [device-selection]
-    picotool otp list|get|set|load|dump|permissions|white-label
+    picotool seal [--quiet] [--verbose] [--hash] [--sign] [--clear] [--pin-xip-sram] <infile> [-t <type>] [-o <offset>] <outfile> [-t
+                <type>] <key> <otp> [--major <major>] [--minor <minor>] [--rollback <rollback> [<rows>..]]
+    picotool encrypt [--quiet] [--verbose] [--embed] [--fast-rosc] [--use-mbedtls] [--otp-key-page <page>] [--hash] [--sign] [--no-clear]
+                [--pin-xip-sram] <infile> [-t <type>] [-o <offset>] <outfile> [-t <type>] <aes_key> <iv_salt> <signing_key> <otp>
     picotool partition info|create
-    picotool uf2 info|convert
-    picotool version [-s] [<version>]
+    picotool uf2 convert|info
+    picotool otp list|get|set|load|dump|permissions|white-label
     picotool coprodis [--quiet] [--verbose] <infile> <outfile>
-    picotool help [<cmd>]
+    picotool link [--quiet] [--verbose] <outfile> [-t <type>] <infile1> [-t <type>] <infile2> [-t <type>] [<infile3>] [-t <type>] [-p <pad>]
 
 COMMANDS:
+    help        Show general help or help for a specific command
+    version     Display picotool version
     info        Display information from the target device(s) or file.
                 Without any arguments, this will display basic information for all connected RP-series devices in BOOTSEL mode
     config      Display or change program configuration settings from the target device(s) or file.
     load        Load the program / memory range stored in a file onto the device.
-    encrypt     Encrypt the program.
-    seal        Add final metadata to a binary, optionally including a hash and/or signature.
-    link        Link multiple binaries into one block loop.
     save        Save the program / memory stored in flash on the device to a file.
-    erase       Erase the program / memory stored in flash on the device.
     verify      Check that the device contents match those in the file.
+    erase       Erase the program / memory stored in flash on the device.
     reboot      Reboot the device
-    otp         Commands related to the RP2350 OTP (One-Time-Programmable) Memory
+    seal        Add final metadata to a binary, optionally including a hash and/or signature.
+    encrypt     Encrypt the program.
     partition   Commands related to RP2350 Partition Tables
     uf2         Commands related to UF2 creation and status
-    version     Display picotool version
+    otp         Commands related to the RP2350 OTP (One-Time-Programmable) Memory
     coprodis    Post-process coprocessor instructions in disassembly files.
-    help        Show general help or help for a specific command
+    link        Link multiple binaries into one block loop.
 
 Use "picotool help <cmd>" for more info
 ```
