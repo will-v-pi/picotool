@@ -76,9 +76,7 @@ int main(void) {
         printf("ERROR: Rebooted by Watchdog\n");
     }
 
-    board_init();
     printf("TinyUSB Picotool\n");
-    tuh_init(BOARD_TUH_RHPORT);
 
     printf("Ready\n");
     stdio_set_chars_available_callback(key_pressed_func, NULL);
@@ -104,6 +102,8 @@ int main(void) {
     add_repeating_timer_ms(5000, repeating_timer_callback, NULL, &timer);
     watchdog_enable(7000, true);
 
+    // Start tinyusb and run main
+    tuh_init(BOARD_TUH_RHPORT);
     picotool_main(argc, argv);
 
     // Reboot ready for next command

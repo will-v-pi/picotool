@@ -8944,32 +8944,38 @@ int main(int argc, char **argv) {
         fos_ptr = fos_null_ptr;
     }
 
-#if HAS_LIBUSB
-    libusb_context *ctx = nullptr;
-
-    // save complicating the grammar
+#if HAS_USB
     if (settings.force_no_reboot) settings.force = true;
 
-    struct libusb_device **devs = nullptr;
     device_map devices;
+
+#if HAS_LIBUSB
+    libusb_context *ctx = nullptr;
+    struct libusb_device **devs = nullptr;
     vector<usb_device_t> to_close;
+#endif
 
     try {
+#if !PICO_ON_DEVICE
         signal(SIGINT, cancelled);
         signal(SIGTERM, cancelled);
+#endif
 
         if (settings.reboot_usb && settings.reboot_app_specified) {
             fail(ERROR_ARGS, "Cannot specify both -u and -a reboot options");
         }
 
+#if HAS_LIBUSB
         if (selected_cmd->get_device_support() != cmd::none) {
             if (libusb_init(&ctx)) {
                 fail(ERROR_USB, "Failed to initialise libUSB\n");
             }
         }
+#endif
 
         // we only loop a second time if we want to reboot some devices (which may cause device
         for (int tries = 0; !rc && tries <= MAX_REBOOT_TRIES; tries++) {
+#if HAS_LIBUSB
             if (ctx) {
                 if (libusb_get_device_list(ctx, &devs) < 0) {
                     fail(ERROR_USB, "Failed to enumerate USB devices\n");
@@ -8996,6 +9002,33 @@ int main(int argc, char **argv) {
                     }
                 }
             }
+#elif USE_TINYUSB
+            if (selected_cmd->get_device_support() != cmd::none) {
+                // Drive the TinyUSB stack until a device appears or we time out.
+                // USB enumeration takes many task iterations (100-500 ms typically).
+                {
+                    uint32_t start_us = time_us_32();
+                    while (time_us_32() - start_us < 5000000u) {
+                        tuh_task();
+                        usb_tinyusb_task();
+                        if (usb_tinyusb_get_daddr() != 0 || usb_tinyusb_get_stdio_daddr() != 0) break;
+                    }
+                }
+                devices.clear();
+                for (uint8_t daddr = 1; daddr <= CFG_TUH_DEVICE_MAX; daddr++) {
+                    if (usb_tinyusb_is_mounted(daddr)) {
+                        chip_t chip = usb_tinyusb_is_rp2350(daddr) ? rp2350 : rp2040;
+                        devices[dr_vidpid_bootrom_ok].emplace_back(
+                            std::make_tuple(chip, (usb_device_t)daddr, (usb_device_t)daddr));
+                    }
+                    if (usb_tinyusb_is_stdio_mounted(daddr)) {
+                        chip_t chip = usb_tinyusb_is_stdio_rp2350(daddr) ? rp2350 : rp2040;
+                        devices[dr_vidpid_stdio_usb].emplace_back(
+                            std::make_tuple(chip, (usb_device_t)daddr, (usb_device_t)daddr));
+                    }
+                }
+            }
+#endif // HAS_LIBUSB / USE_TINYUSB
             auto supported = selected_cmd->get_device_support();
             switch (supported) {
                 case cmd::device_support::zero_or_more:
@@ -9031,6 +9064,7 @@ int main(int argc, char **argv) {
                                     fos << bus_device_string(std::get<1>(d), std::get<0>(d)) << description << "\n";
                                 }
                             };
+#if HAS_LIBUSB
     #if defined(__linux__) || defined(__APPLE__)
                             printer(dr_vidpid_bootrom_cant_connect,
                                     " appears to be in BOOTSEL mode, but picotool was unable to connect. Maybe try 'sudo' or check your permissions.");
@@ -9046,6 +9080,7 @@ int main(int argc, char **argv) {
                                     " appears to be an RP-series PicoProbe device not in BOOTSEL mode.");
                             printer(dr_vidpid_micropython,
                                     " appears to be an RP-series MicroPython device not in BOOTSEL mode.");
+#endif // HAS_LIBUSB
                             if (selected_cmd->force_requires_pre_reboot()) {
                                 printer(dr_vidpid_stdio_usb,
                                         " appears to have a USB serial connection, so consider -f (or -F) to force reboot in order to run the command.");
@@ -9078,7 +9113,11 @@ int main(int argc, char **argv) {
                     break;
             }
             if (!rc) {
+#if HAS_LIBUSB
                 if (settings.force && ctx) { // actually ctx should never be null as we are targeting device if force is set, but still
+#else
+                if (settings.force) {
+#endif
                     if (devices[dr_vidpid_stdio_usb].size() != 1 && !tries) {
                         fail(ERROR_NOT_POSSIBLE,
                              "Forced command requires a single rebootable RP-series device to be targeted.");
@@ -9089,18 +9128,19 @@ int main(int argc, char **argv) {
                             auto &to_reboot = std::get<1>(devices[dr_vidpid_stdio_usb][0]);
                             auto &to_reboot_handle = std::get<2>(devices[dr_vidpid_stdio_usb][0]);
                             unsigned int disable_mask = 1;  // disable MSC interface
-    #if defined(_WIN32)
+#if HAS_LIBUSB
+#if defined(_WIN32)
                             {
                                 struct libusb_device_descriptor desc;
                                 libusb_get_device_descriptor(to_reboot, &desc);
                                 if (desc.idProduct == PRODUCT_ID_RP2040_STDIO_USB || settings.force_rp2040) {
-                                    // the Zadig driver should be setup for the device in BOOTSEL mode with no interfaces disabled,  
-                                    // as all the interfaces are enabled when you plug it in while holding down the BOOTSEL button  
+                                    // the Zadig driver should be setup for the device in BOOTSEL mode with no interfaces disabled,
+                                    // as all the interfaces are enabled when you plug it in while holding down the BOOTSEL button
                                     disable_mask = 0;
                                     settings.force_rp2040 = true;
                                 }
                             }
-    #endif
+#endif
                             if (settings.ser.empty() && to_reboot_handle) {
                                 // store USB serial number, to pick correct device after reboot
                                 struct libusb_device_descriptor desc;
@@ -9113,7 +9153,7 @@ int main(int argc, char **argv) {
                                     fos << "Tracking device serial number " << ser_str << " for reboot\n";
                                 }
                             }
-
+#endif // HAS_LIBUSB
                             reboot_device(to_reboot, to_reboot_handle, true, disable_mask);
                             fos << "The device was asked to reboot into BOOTSEL mode so the command can be executed.";
                         } else if (tries == 1) {
@@ -9122,6 +9162,7 @@ int main(int argc, char **argv) {
                             fos << "...";
                         }
                         fos.flush();
+#if HAS_LIBUSB
                         for (const auto &handle : to_close) {
                             libusb_close(handle);
                         }
@@ -9147,6 +9188,18 @@ int main(int argc, char **argv) {
                                 settings.pid = -1;
                             }
                         }
+#elif USE_TINYUSB
+                        devices.clear();
+                        // Pump TinyUSB for up to 3 s, stopping early when a PICOBOOT device appears.
+                        {
+                            uint32_t start_us = time_us_32();
+                            while (time_us_32() - start_us < 3000000u) {
+                                tuh_task();
+                                usb_tinyusb_task();
+                                if (usb_tinyusb_get_daddr() != 0) break;
+                            }
+                        }
+#endif // HAS_LIBUSB / USE_TINYUSB
                         continue;
                     }
                 }
@@ -9184,166 +9237,15 @@ int main(int argc, char **argv) {
         rc = ERROR_UNKNOWN;
     }
 
+#if HAS_LIBUSB
     for(const auto &handle : to_close) {
         libusb_close(handle);
     }
     if (devs) libusb_free_device_list(devs, 1);
     if (ctx) libusb_exit(ctx);
+#endif // HAS_LIBUSB
 
-#elif USE_TINYUSB
-    // TinyUSB on-device path.
-    // The application must have already called tuh_init() before main() or
-    // before invoking picotool commands.
-
-    if (settings.force_no_reboot) settings.force = true;
-
-    device_map devices;
-
-    try {
-        if (settings.reboot_usb && settings.reboot_app_specified) {
-            fail(ERROR_ARGS, "Cannot specify both -u and -a reboot options");
-        }
-
-        for (int tries = 0; !rc && tries <= MAX_REBOOT_TRIES; tries++) {
-            if (selected_cmd->get_device_support() != cmd::none) {
-                // Drive the TinyUSB stack until a device appears or we time out.
-                // USB enumeration takes many task iterations (100–500 ms typically).
-                {
-                    uint32_t start_us = time_us_32();
-                    while (time_us_32() - start_us < 5000000u) {
-                        tuh_task();
-                        usb_tinyusb_task();
-                        if (usb_tinyusb_get_daddr() != 0 || usb_tinyusb_get_stdio_daddr() != 0) break;
-                    }
-                }
-                devices.clear();
-                for (uint8_t daddr = 1; daddr <= CFG_TUH_DEVICE_MAX; daddr++) {
-                    if (usb_tinyusb_is_mounted(daddr)) {
-                        chip_t chip = usb_tinyusb_is_rp2350(daddr) ? rp2350 : rp2040;
-                        devices[dr_vidpid_bootrom_ok].emplace_back(
-                            std::make_tuple(chip, (usb_device_t)daddr, (usb_device_t)daddr));
-                    }
-                    if (usb_tinyusb_is_stdio_mounted(daddr)) {
-                        chip_t chip = usb_tinyusb_is_stdio_rp2350(daddr) ? rp2350 : rp2040;
-                        devices[dr_vidpid_stdio_usb].emplace_back(
-                            std::make_tuple(chip, (usb_device_t)daddr, (usb_device_t)daddr));
-                    }
-                }
-            }
-
-            auto supported = selected_cmd->get_device_support();
-            switch (supported) {
-                case cmd::device_support::zero_or_more:
-                    if (!settings.filenames[0].empty()) break;
-                    // fall thru
-                case cmd::device_support::one:
-                    if (devices[dr_vidpid_bootrom_ok].empty() &&
-                        (!settings.force || devices[dr_vidpid_stdio_usb].empty())) {
-                        if (tries == 0 || tries == MAX_REBOOT_TRIES) {
-                            if (tries) fos << "\n\n";
-                            fos << missing_device_string(tries > 0, selected_cmd->requires_rp2350());
-                            if (tries) {
-                                fos << " It is possible the device is not responding, and will have to be manually entered into BOOTSEL mode.\n";
-                            }
-                            fos << "\n";
-                            fos.first_column(0);
-                            fos.hanging_indent(4);
-                            auto printer = [&](enum picoboot_device_result r, const string &description) {
-                                for (auto d : devices[r]) {
-                                    fos << bus_device_string(std::get<1>(d), std::get<0>(d)) << description << "\n";
-                                }
-                            };
-                            if (selected_cmd->force_requires_pre_reboot()) {
-                                printer(dr_vidpid_stdio_usb,
-                                        " appears to have a USB connection, so consider -f (or -F) to force reboot in order to run the command.");
-                            } else {
-                                printer(dr_vidpid_stdio_usb,
-                                        " appears to have a USB connection, so consider -f to force the reboot.");
-                            }
-                            rc = ERROR_NO_DEVICE;
-                        } else {
-                            break;
-                        }
-                    } else if (supported == cmd::device_support::one) {
-                        if (devices[dr_vidpid_bootrom_ok].size() > 1 ||
-                            (devices[dr_vidpid_bootrom_ok].empty() && devices[dr_vidpid_stdio_usb].size() > 1)) {
-                            fail(ERROR_NOT_POSSIBLE, "Command requires a single RP-series device to be targeted.");
-                        }
-                        if (!devices[dr_vidpid_bootrom_ok].empty()) {
-                            settings.force = false;
-                        }
-                    } else if (supported == cmd::device_support::zero_or_more && settings.force && !devices[dr_vidpid_bootrom_ok].empty()) {
-                        settings.force = false;
-                    }
-                    fos.first_column(0);
-                    fos.hanging_indent(0);
-                    break;
-                default:
-                    break;
-            }
-
-            if (!rc) {
-                if (settings.force) {
-                    if (devices[dr_vidpid_stdio_usb].size() != 1 && !tries) {
-                        fail(ERROR_NOT_POSSIBLE,
-                             "Forced command requires a single rebootable RP-series device to be targeted.");
-                    }
-                    if (selected_cmd->force_requires_pre_reboot()) {
-                        if (!tries) {
-                            auto &to_reboot        = std::get<1>(devices[dr_vidpid_stdio_usb][0]);
-                            auto &to_reboot_handle = std::get<2>(devices[dr_vidpid_stdio_usb][0]);
-                            unsigned int disable_mask = 1;  // disable MSC interface
-                            reboot_device(to_reboot, to_reboot_handle, true, disable_mask);
-                            fos << "The device was asked to reboot into BOOTSEL mode so the command can be executed.";
-                        } else if (tries == 1) {
-                            fos << "\nWaiting for device to reboot";
-                        } else {
-                            fos << "...";
-                        }
-                        fos.flush();
-                        devices.clear();
-                        // Pump TinyUSB for up to 3 s, stopping early when a PICOBOOT device appears.
-                        {
-                            uint32_t start_us = time_us_32();
-                            while (time_us_32() - start_us < 3000000u) {
-                                tuh_task();
-                                usb_tinyusb_task();
-                                if (usb_tinyusb_get_daddr() != 0) break;
-                            }
-                        }
-                        continue;
-                    }
-                }
-                if (tries) fos << "\n\n";
-                if (!selected_cmd->execute(devices) && tries) {
-                    if (settings.force_no_reboot) {
-                        fos << "\nThe device has been left accessible, but without the drive mounted; use 'picotool reboot' to reboot into regular BOOTSEL mode or application mode.\n";
-                    } else {
-                        if (devices[dr_vidpid_bootrom_ok].size() == 1) {
-                            reboot_cmd->quiet = true;
-                            reboot_cmd->execute(devices);
-                            fos << "\nThe device was asked to reboot back into application mode.\n";
-                        }
-                    }
-                }
-                break;
-            }
-        }
-    } catch (failure_error &e) {
-        std::cout << "ERROR: " << e.what() << "\n";
-        rc = e.code();
-    } catch (picoboot::command_failure& e) {
-        std::cout << "ERROR: The " << chip_name(selected_chip) << " device returned an error: " << e.what() << "\n";
-        rc = ERROR_UNKNOWN;
-    } catch (picoboot::connection_error&) {
-        std::cout << "ERROR: Communication with " << chip_name(selected_chip) << " device failed\n";
-        rc = ERROR_CONNECTION;
-    } catch (std::exception &e) {
-        std::cout << "ERROR: " << e.what() << "\n";
-        rc = ERROR_UNKNOWN;
-    }
-
-#else
+#else // less code to compile when !HAS_USB
     device_map devices;
 
     if (selected_cmd->get_device_support() != cmd::none) {
@@ -9360,7 +9262,7 @@ int main(int argc, char **argv) {
         std::cout << "ERROR: " << e.what() << "\n";
         rc = ERROR_UNKNOWN;
     }
-#endif // HAS_LIBUSB
+#endif
 
     return rc;
 }

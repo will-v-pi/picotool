@@ -32,6 +32,7 @@
 
 #include "tusb.h"
 #include "pico/usb_reset_interface.h"
+#include "hardware/structs/usb_dpram.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -42,6 +43,17 @@
 #define PICOBOOT_VID        0x2e8au
 #define PICOBOOT_PID_RP2040 0x0003u
 #define PICOBOOT_PID_RP2350 0x000fu
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-device disconnect flag
+//
+// Set in usb_tinyusb_unmount, cleared in usb_tinyusb_mount.
+// Checked by _ctrl_xfer_sync/_bulk_xfer_sync so their spin loops can exit
+// early when the device disconnects mid-transfer (e.g. reboot request STATUS
+// stage never completes because the device rebooted).
+// ─────────────────────────────────────────────────────────────────────────────
+
+static volatile bool _disconnected[CFG_TUH_DEVICE_MAX + 1];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-device state — PICOBOOT devices
@@ -88,6 +100,10 @@ CFG_TUH_MEM_SECTION CFG_TUH_MEM_ALIGN static uint8_t _halt_status_buf[2];
 // Internal transfer helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+static void _xfer_complete_cb(tuh_xfer_t *xfer) {
+    *((volatile xfer_result_t *)xfer->user_data) = xfer->result;
+}
+
 // Synchronous control transfer.
 // Returns number of bytes transferred on success (≥ 0), -1 on failure.
 static int _ctrl_xfer_sync(uint8_t daddr, uint8_t bmRequestType, uint8_t bRequest,
@@ -100,21 +116,21 @@ static int _ctrl_xfer_sync(uint8_t daddr, uint8_t bmRequestType, uint8_t bReques
         .wIndex        = tu_htole16(wIndex),
         .wLength       = tu_htole16(len),
     };
-    xfer_result_t result = XFER_RESULT_INVALID;
+    volatile xfer_result_t result = XFER_RESULT_INVALID;
     tuh_xfer_t xfer = {
         .daddr       = daddr,
         .ep_addr     = 0,
         .setup       = &req,
         .buffer      = data,
-        .complete_cb = NULL,
+        .complete_cb = _xfer_complete_cb,
         .user_data   = (uintptr_t)&result,
     };
     if (!tuh_control_xfer(&xfer)) return -1;
+    while (result == XFER_RESULT_INVALID) {
+        if (daddr < TU_ARRAY_SIZE(_disconnected) && _disconnected[daddr]) return -1;
+        tuh_task();
+    }
     return (result == XFER_RESULT_SUCCESS) ? (int)len : -1;
-}
-
-static void _bulk_complete_cb(tuh_xfer_t *xfer) {
-    *((volatile xfer_result_t *)xfer->user_data) = xfer->result;
 }
 
 // Synchronous bulk transfer.  Returns 0 on success, -1 on failure.
@@ -126,11 +142,12 @@ static int _bulk_xfer_sync(uint8_t daddr, uint8_t ep_addr,
         .ep_addr     = ep_addr,
         .buflen      = len,
         .buffer      = buf,
-        .complete_cb = _bulk_complete_cb,
+        .complete_cb = _xfer_complete_cb,
         .user_data   = (uintptr_t)&result,
     };
     if (!tuh_edpt_xfer(&xfer)) return -1;
     while (result == XFER_RESULT_INVALID) {
+        if (daddr < TU_ARRAY_SIZE(_disconnected) && _disconnected[daddr]) return -1;
         tuh_task();
     }
     return (result == XFER_RESULT_SUCCESS) ? 0 : -1;
@@ -250,6 +267,7 @@ static bool _setup_device(uint8_t daddr) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void usb_tinyusb_mount(uint8_t daddr) {
+    if (daddr < TU_ARRAY_SIZE(_disconnected)) _disconnected[daddr] = false;
     uint16_t vid, pid;
     tuh_vid_pid_get(daddr, &vid, &pid);
     if (vid == PICOBOOT_VID &&
@@ -273,14 +291,28 @@ void usb_tinyusb_mount(uint8_t daddr) {
 }
 
 void usb_tinyusb_unmount(uint8_t daddr) {
+    if (daddr < TU_ARRAY_SIZE(_disconnected)) _disconnected[daddr] = true;
     if (daddr < TU_ARRAY_SIZE(_devs)) {
-        _devs[daddr].mounted = false;
-        _needs_setup[daddr]  = false;
-        printf("PICOBOOT: addr %u disconnected\r\n", daddr);
-    }
-    if (daddr < TU_ARRAY_SIZE(_stdio_devs)) {
-        _stdio_devs[daddr].mounted      = false;
-        _needs_reset_check[daddr]       = false;
+        bool was_picoboot = _devs[daddr].mounted || _needs_setup[daddr];
+        bool was_stdio    = _stdio_devs[daddr].mounted || _needs_reset_check[daddr];
+        _devs[daddr].mounted        = false;
+        _needs_setup[daddr]         = false;
+        _stdio_devs[daddr].mounted  = false;
+        _needs_reset_check[daddr]   = false;
+        if (was_picoboot)
+            printf("PICOBOOT: addr %u disconnected\r\n", daddr);
+        else if (was_stdio)
+            printf("stdio_usb: addr %u disconnected\r\n", daddr);
+
+        // hcd_device_close() in TinyUSB iterates ep_pool[1..N] and clears each
+        // endpoint's buffer_control register, but the shared EPX control endpoint
+        // is a separate global that it never touches.  If the device disconnected
+        // while a control transfer was in flight (e.g. the reboot STATUS stage
+        // ZLP was pending), USB_BUF_CTRL_AVAIL can be left set in epx_buf_ctrl.
+        // The next device that enumerates then panics in
+        // _hw_endpoint_buffer_control_update32 when it tries to set AVAIL again.
+        // Clear the register here as a workaround.
+        usbh_dpram->epx_buf_ctrl = 0;
     }
 }
 
