@@ -20,9 +20,19 @@ import pytest
 
 pytestmark = [pytest.mark.hardware, pytest.mark.rp2350, pytest.mark.otp]
 
-# Unnamed general OTP data row (0x040). Override for your FPGA.
-SCRATCH_ROW = os.environ.get("PICOTOOL_TEST_OTP_ROW", "0x040")
+# Unnamed, unallocated OTP data row. 0x0100 sits well inside the large
+# 0x00bf-0x0f48 gap with no named register at all (`otp list 0x100` matches
+# nothing) - confirmed on a real device. An EARLIER version of this default
+# (0x040) was wrong: that row is actually OTP_DATA_CRIT1 (DEBUG_DISABLE /
+# SECURE_DEBUG_DISABLE / SECURE_BOOT_ENABLE), discovered when a run against a
+# real FPGA left stray bits in one of its 8 redundant copies. Override with
+# PICOTOOL_TEST_OTP_ROW for your particular FPGA image (the row must not
+# already be programmed - OTP is write-once).
+SCRATCH_ROW = os.environ.get("PICOTOOL_TEST_OTP_ROW", "0x100")
 SCRATCH_VALUE = "0x1234"  # 16-bit ECC value
+# A second, distinct scratch row for tests that must not collide with
+# SCRATCH_ROW (OTP is write-once, so two tests can't share one row).
+SCRATCH_ROW2 = os.environ.get("PICOTOOL_TEST_OTP_ROW2", "0x104")
 
 # Pages the permissions regression (#294) writes locks to. FPGA-resettable;
 # override for your image if these collide with something you care about.
@@ -46,7 +56,9 @@ class TestOtpRead:
         with rp2350_board.bootsel() as dev:
             r = dev.run("otp", "dump", timeout=60)
             assert r.ok, r
-            assert "ROW" in r.out
+            # Plain `otp dump` prints hex-offset-labelled rows, e.g.
+            # "0000: 00000000, 00000000, ..." - not row names.
+            assert re.search(r"^[0-9a-f]{4}: ", r.out, re.MULTILINE), r
 
     def test_otp_dump_to_file(self, rp2350_board, tmp_path):
         out = tmp_path / "otp.dump"
@@ -74,12 +86,13 @@ class TestOtpWrite:
             assert SCRATCH_VALUE.lower().lstrip("0x") in get_r.out.lower()
 
     def test_otp_load_from_file(self, rp2350_board, tmp_path):
-        # 2 bytes/row for ECC data.
+        # 2 bytes/row for ECC data. Uses SCRATCH_ROW2, not SCRATCH_ROW - OTP is
+        # write-once, and test_otp_set_then_get already burns SCRATCH_ROW.
         data = tmp_path / "rows.bin"
         data.write_bytes(bytes([0xAA, 0x55]))
         with rp2350_board.bootsel() as dev:
             r = dev.run(
-                "otp", "load", "-e", "-s", SCRATCH_ROW, str(data), "-t", "bin"
+                "otp", "load", "-e", "-s", SCRATCH_ROW2, str(data), "-t", "bin"
             )
             assert r.ok, r
 

@@ -179,6 +179,18 @@ The device-free `otp list` tests (`test_otp_list.py`) always run. The scratch
 row used by the OTP write tests defaults to an unnamed data row and can be
 overridden with `PICOTOOL_TEST_OTP_ROW`.
 
+**Known issue:** `TestOtpIssueRegressions::test_permissions_are_per_page` (the
+`#294` regression) has been observed to wedge an RP2350 FPGA - `otp permissions`
+loads a temporary helper binary (`xip_ram_perms`) onto the device (required by
+errata RP2350-E15), and on at least one FPGA this failed with `ERROR: File to
+load contained an invalid memory range`, after which the device stopped
+responding to `otp get`/`info -a`/even `erase -a` (though SWD access stayed
+healthy throughout). A power cycle fully recovered it, and OTP itself was
+unaffected. Root cause not yet identified - possibly an FPGA-specific
+incompatibility with the embedded helper binary. If you hit this, power-cycle
+the board; consider deselecting this one test on FPGAs where it reproduces:
+`--deselect test_otp_device.py::TestOtpIssueRegressions::test_permissions_are_per_page`.
+
 ### Secure boot and rollback
 
 `test_seal_secure_boot.py` tests `picotool seal`'s hashing, signing and
@@ -208,11 +220,12 @@ rollback-version metadata entirely with files - no hardware, always runs.
   Only ever run it against an FPGA image whose OTP-equivalent state you can
   reset afterward, and run it **in isolation** - once it has run, the plain
   unsigned binaries the rest of this suite relies on will no longer boot on
-  that chip. This test has been carefully derived from picotool's documented
-  seal/OTP behaviour and reviewed, but has not itself been executed against
-  real hardware while writing this suite (no FPGA was available - only real,
-  disposable Pico / Pico 2 boards, which this must never run against). Treat it
-  as reviewed-but-unexercised until it has run successfully once on your FPGA.
+  that chip. Verified passing end-to-end against a real RP2350 FPGA
+  (2026-07-20): correctly signed images boot, tampering is rejected via
+  signature, an older rollback version is rejected once a newer one has run,
+  and a newer version always succeeds. Signature/rollback verification was
+  markedly slower than real silicon on that FPGA (crypto emulation) - budget
+  **10-15 minutes** for a full run, not seconds.
 
 ## Regression tests for reported issues
 
