@@ -23,6 +23,8 @@ pico-sdk and pico-examples.
 | `bdev` via a *binary-info* block device (RP2040 + RP2350) | `test_bdev_binfo.py` | **yes** |
 | `bdev` against MicroPython / CircuitPython drives (RP2040 + RP2350) | `test_bdev_firmware.py` | **yes** |
 | `otp` dump / get / set / load (RP2350) | `test_otp_device.py` | **yes, gated** |
+| `seal` - hashing, signing, rollback metadata (RP2350) | `test_seal_secure_boot.py` | no |
+| Secure boot + rollback enforcement (RP2350) | `test_otp_secure_boot.py` | **yes, gated (extra)** |
 
 Hardware tests are parametrized over every connected & selected chip
 (`rp2040`, `rp2350`); a chip that is not connected is skipped automatically.
@@ -176,6 +178,41 @@ FPGA whose OTP can be reset:
 The device-free `otp list` tests (`test_otp_list.py`) always run. The scratch
 row used by the OTP write tests defaults to an unnamed data row and can be
 overridden with `PICOTOOL_TEST_OTP_ROW`.
+
+### Secure boot and rollback
+
+`test_seal_secure_boot.py` tests `picotool seal`'s hashing, signing and
+rollback-version metadata entirely with files - no hardware, always runs.
+
+`test_otp_secure_boot.py` exercises the real thing on a device, in two tiers:
+
+* `TestProvisionBootKey` - burns one boot-key slot but does **not** enable
+  enforcement, so the board keeps booting ordinary unsigned images afterward.
+  Gated behind plain `--run-otp`, same as the rest of `test_otp_device.py`.
+* `TestSecureBootEnforcement` - sets `CRIT1.SECURE_BOOT_ENABLE`. Unlike every
+  other OTP test, this is a **one-way, whole-chip** change: once set, that
+  specific chip will never again boot an unsigned image, for the rest of its
+  life - and per picotool's own field description, it also **permanently
+  disables the RISC-V cores**. There is no "restore to normal" afterward.
+
+  This needs `--run-otp` **and** a second, separate opt-in:
+
+  ```bash
+  ./test-venv/bin/python -m pytest test_otp_secure_boot.py::TestSecureBootEnforcement \
+      --run-otp --boards rp2350
+  # (skipped without this too - see the skip reason for why)
+  PICOTOOL_TEST_ENABLE_SECURE_BOOT=1 ./test-venv/bin/python -m pytest \
+      test_otp_secure_boot.py::TestSecureBootEnforcement --run-otp --boards rp2350
+  ```
+
+  Only ever run it against an FPGA image whose OTP-equivalent state you can
+  reset afterward, and run it **in isolation** - once it has run, the plain
+  unsigned binaries the rest of this suite relies on will no longer boot on
+  that chip. This test has been carefully derived from picotool's documented
+  seal/OTP behaviour and reviewed, but has not itself been executed against
+  real hardware while writing this suite (no FPGA was available - only real,
+  disposable Pico / Pico 2 boards, which this must never run against). Treat it
+  as reviewed-but-unexercised until it has run successfully once on your FPGA.
 
 ## Regression tests for reported issues
 

@@ -85,9 +85,15 @@ def pytest_collection_modifyitems(config, items):
     )
     for item in items:
         # Skip OTP *device* tests unless explicitly enabled. OTP tests that only
-        # touch files opt out of the gate with @pytest.mark.otp(device=False)...
-        # here we gate any otp-marked test that also needs a board.
-        if "otp" in item.keywords and "board" in getattr(item, "fixturenames", []):
+        # touch files (test_otp_list.py) don't depend on any device fixture and
+        # so are unaffected here. "device_manager" is included (not just
+        # "board") because some device tests deliberately bypass the `board`
+        # fixture's teardown (see test_otp_secure_boot.py's
+        # TestSecureBootEnforcement) and talk to DeviceManager directly.
+        fixturenames = getattr(item, "fixturenames", [])
+        if "otp" in item.keywords and (
+            "board" in fixturenames or "device_manager" in fixturenames
+        ):
             if not run_otp:
                 item.add_marker(skip_otp)
 
