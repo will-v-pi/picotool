@@ -152,6 +152,15 @@ honours picotool's `-f` reset interface, these tests require the debug probe
 | `--openocd PATH` | openocd binary |
 | `--no-openocd` | disable the debug-probe recovery path |
 | `--run-otp` | **enable the OTP device tests — FPGA only (see below)** |
+| `--require-boards` | fail the whole run immediately if any selected board isn't connected, instead of silently skipping its tests (see below) |
+
+By default, a board that isn't connected just means its tests are skipped - handy
+when iterating with only one board on your desk, but it also means a genuinely
+disconnected/dead board in CI produces a suspiciously short, all-green run
+instead of a failure. Pass `--require-boards` to turn that into a hard,
+immediate failure (checked once per session, before any tests run) - use it in
+CI/automation where "both boards were actually exercised" needs to be verified,
+not assumed.
 
 ## OTP tests
 

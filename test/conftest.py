@@ -54,6 +54,14 @@ def pytest_addoption(parser):
         help="run OTP tests that WRITE to a device. OTP is one-time-programmable "
         "- only enable this against an FPGA, never a real chip.",
     )
+    g.addoption(
+        "--require-boards",
+        action="store_true",
+        help="fail the whole run immediately if any selected board (--boards) "
+        "isn't connected, instead of silently skipping its tests. Useful in CI "
+        "to catch a disconnected/dead board rather than getting a suspiciously "
+        "short, all-green run.",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -135,11 +143,13 @@ def selected_chips(request) -> list[str]:
 
 
 @pytest.fixture(scope="session")
-def connected_chips(device_manager, selected_chips) -> list[str]:
+def connected_chips(request, device_manager, selected_chips) -> list[str]:
     """Chips that are actually reachable over USB right now.
 
     Recovers any board left in a bad state (BOOTSEL loop / empty flash) first,
-    then retries discovery a few times to ride out re-enumeration.
+    then retries discovery a few times to ride out re-enumeration. With
+    --require-boards, any selected chip that's still missing aborts the whole
+    run instead of leaving its tests to skip individually.
     """
     import time
 
@@ -171,6 +181,14 @@ def connected_chips(device_manager, selected_chips) -> list[str]:
                     present.add(chip)
             except Exception as e:  # pragma: no cover - best-effort recovery
                 print(f"warning: could not recover {chip}: {e}")
+
+    still_missing = [c for c in selected_chips if c not in present]
+    if still_missing and request.config.getoption("--require-boards"):
+        pytest.exit(
+            f"--require-boards: not connected: {still_missing} "
+            f"(connected: {sorted(present) or 'none'})",
+            returncode=1,
+        )
 
     return [c for c in selected_chips if c in present]
 
