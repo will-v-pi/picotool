@@ -1,0 +1,10 @@
+# Generated firmware binaries, scratch build trees, and cloned dependencies
+binaries/
+_work/
+_deps/
+
+# Python
+test-venv/
+__pycache__/
+.pytest_cache/
+*.pyc
