@@ -65,7 +65,12 @@ def test_help_for_subcommand(picotool, cmd, sub):
     # named in the parent's help output.
     r = picotool.run("help", cmd)
     assert r.ok, r
-    assert sub in r.out, f"{cmd} help does not mention subcommand {sub}"
+    # Word-boundary match: a bare substring test lets short names like "ls"/
+    # "cp"/"rm" match unrelated help prose ("also", "false", ...), so a missing
+    # or renamed subcommand could still pass.
+    assert re.search(rf"\b{re.escape(sub)}\b", r.out), (
+        f"{cmd} help does not mention subcommand {sub}"
+    )
 
 
 def test_version(picotool):

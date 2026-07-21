@@ -37,10 +37,12 @@ def blockdev(rp2350_board, picotool, tmp_path):
     assert picotool.run("partition", "create", str(j), str(pt)).ok
     ctx = rp2350_board.bootsel()
     dev = ctx.__enter__()
-    dev.ok("erase", "-a", timeout=120)
-    dev.ok("load", str(pt))
-    dev.reboot_rescan()
+    # Setup inside the try so the BOOTSEL-exit cleanup still runs if erase/
+    # load/rescan raises partway through.
     try:
+        dev.ok("erase", "-a", timeout=120)
+        dev.ok("load", str(pt))
+        dev.reboot_rescan()
         yield dev
     finally:
         ctx.__exit__(None, None, None)

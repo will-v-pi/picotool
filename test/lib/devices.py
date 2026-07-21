@@ -319,8 +319,15 @@ class DeviceManager:
             # In BOOTSEL: load a USB app and reboot into it.
             self.flash_app(board)
             return
-        if reflash or not self.app_visible(board.chip):
+        if reflash or (not self.any_bootsel() and not self.app_visible(board.chip)):
             # Running a non-USB / unknown image - get to BOOTSEL and restore.
+            # The `not any_bootsel()` guard avoids a false negative: while some
+            # *other* board sits in BOOTSEL, app_visible() can't use `info -a`
+            # (it segfaults on develop in that state and so returns False
+            # defensively). Without the guard we'd needlessly reflash this
+            # healthy board just because the other one is in BOOTSEL; skipping
+            # is safe because a genuinely-broken board is caught on a later
+            # pass once nothing is in BOOTSEL (and CI cleanup forces reflash).
             self.ensure_bootsel(board)
             self.flash_app(board)
 
@@ -402,7 +409,17 @@ class DeviceManager:
         cmd = self._openocd_base(board)
         for c in tcl_cmds:
             cmd += ["-c", c]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            # A hung probe raises TimeoutExpired, not a non-zero return - surface
+            # it as DeviceError so the graceful-degradation callers that catch
+            # DeviceError (ensure_bootsel's probe fallback, ensure_no_bootsel)
+            # don't get an uncaught exception mid-recovery.
+            raise DeviceError(
+                f"openocd timed out after {timeout}s for {board.chip}:\n"
+                + " ".join(cmd)
+            ) from e
         if proc.returncode != 0:
             raise DeviceError(
                 f"openocd failed for {board.chip}:\n"
@@ -434,8 +451,10 @@ class DeviceManager:
         """
         if not self.use_openocd:
             raise DeviceError("boot_firmware_then_bootsel needs OpenOCD")
-        self.ensure_bootsel(board)
-        dev = self.find_bootsel(board.chip)
+        # Use ensure_bootsel's return value directly: it either returns a live
+        # BOOTSEL device or raises DeviceError, so this avoids a re-query that
+        # could race to None (and then AttributeError on dev.selector).
+        dev = self.ensure_bootsel(board)
         self.pt.run("erase", "-a", *dev.selector, timeout=120)
         self.pt.run("load", *dev.selector, str(firmware_uf2), timeout=120)
         dev = self.find_bootsel(board.chip)

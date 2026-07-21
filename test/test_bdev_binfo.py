@@ -19,9 +19,11 @@ def binfo_bdev(board, fw):
         pytest.skip("bi_bdev firmware not built - run build_binaries.sh")
     ctx = board.bootsel()
     dev = ctx.__enter__()
-    dev.ok("erase", "-a", timeout=120)
-    dev.ok("load", str(uf2))
+    # Setup inside the try so the BOOTSEL-exit cleanup still runs if erase/load
+    # raises partway through.
     try:
+        dev.ok("erase", "-a", timeout=120)
+        dev.ok("load", str(uf2))
         yield dev
     finally:
         ctx.__exit__(None, None, None)

@@ -202,7 +202,9 @@ class TestSecureBootEnforcement:
             """
             dev = device_manager.ensure_bootsel(board)
             device_manager.pt.run("erase", "-a", *dev.selector, timeout=120)
-            dev = device_manager.find_bootsel(chip)
+            # Re-enter if the device dropped off after erase, so dev is never
+            # None here (ensure_bootsel returns a live device or raises).
+            dev = device_manager.find_bootsel(chip) or device_manager.ensure_bootsel(board)
             device_manager.pt.run("load", *dev.selector, str(elf_path), timeout=90)
             cur = device_manager.find_bootsel(chip)
             if cur:

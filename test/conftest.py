@@ -117,9 +117,14 @@ def binaries() -> dict[str, BinarySet]:
 
 
 @pytest.fixture(scope="session")
-def require_binaries(binaries):
-    """Skip if the firmware binaries have not been built."""
-    missing = [c for c, b in binaries.items() if not b.available()]
+def require_binaries(binaries, selected_chips):
+    """Skip if the firmware binaries for the *selected* boards aren't built.
+
+    Scoped to selected_chips rather than all chips: building only rp2350
+    binaries and running --boards rp2350 should not skip the rp2350 tests
+    just because rp2040's binaries are absent.
+    """
+    missing = [c for c in selected_chips if not binaries[c].available()]
     if missing:
         pytest.skip(
             f"no test binaries for {missing} under {BINARIES_ROOT}; "

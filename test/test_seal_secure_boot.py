@@ -9,6 +9,7 @@ correct (signing, hashing, rollback-metadata validation, tamper detection);
 that file proves the *device* actually enforces what gets provisioned.
 """
 import json
+import re
 import subprocess
 
 import pytest
@@ -164,7 +165,7 @@ class TestSealRollback:
         assert r.ok, r
         info = picotool.run("info", "-a", str(out))
         assert info.ok, info
-        assert "rollback version:" in info.out and "5" in info.out
+        assert re.search(r"rollback version:\s*5\b", info.out), info.out
         # OTP_DATA_DEFAULT_BOOT_VERSION0/1 - picotool's default rollback rows.
         assert "0x04e" in info.out and "0x051" in info.out
 
@@ -199,5 +200,5 @@ class TestSealRollback:
         )
         assert r.ok, r
         info = picotool.run("info", "-a", str(out))
-        assert "rollback version:" in info.out and "10" in info.out
+        assert re.search(r"rollback version:\s*10\b", info.out), info.out
         assert "0x100" in info.out and "0x103" in info.out
