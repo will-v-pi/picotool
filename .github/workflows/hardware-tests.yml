@@ -30,10 +30,15 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Check prerequisites
+        # Bounded so an apt lock / network stall can't hang the job until the
+        # 6-hour default - there's no longer a job-level timeout catching this.
+        timeout-minutes: 15
         run: |
           sudo apt install -y cmake ninja-build python3 build-essential gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
           sudo apt install -y pkg-config libusb-1.0-0-dev
           sudo apt install -y openocd git
+          sudo udevadm control --reload
+          sudo udevadm trigger
 
       - name: Checkout Pico SDK (develop)
         uses: actions/checkout@v7
@@ -67,6 +72,8 @@ jobs:
         # (see "Custom Path Installation"), and gives every downstream step -
         # the test suite, build_binaries.sh's picotool_DIR reuse, cleanup - one
         # consistent installed binary to point at instead of a raw build tree.
+        # (~3 min in practice; bounded since there's no job-level timeout.)
+        timeout-minutes: 15
         run: |
           cmake -S . -B build -G Ninja \
             -D PICO_SDK_PATH="${{ github.workspace }}/pico-sdk" \
@@ -77,6 +84,8 @@ jobs:
 
       - name: Build test firmware binaries
         working-directory: test
+        # ~3 min in practice; bounded since there's no job-level timeout.
+        timeout-minutes: 20
         env:
           PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
           PICO_EXAMPLES_PATH: ${{ github.workspace }}/pico-examples
@@ -85,12 +94,17 @@ jobs:
       - name: Fetch MicroPython / CircuitPython firmware
         working-directory: test
         # Best-effort: test_bdev_firmware.py skips cleanly if these are absent,
-        # so a flaky download here shouldn't fail the whole run.
+        # so a flaky download here shouldn't fail the whole run. Timed out
+        # rather than left to hang, since continue-on-error doesn't cover a
+        # stalled download and there's no job-level timeout.
         continue-on-error: true
+        timeout-minutes: 10
         run: ./fetch_firmware.sh
 
       - name: Set up Python test environment
         working-directory: test
+        # Bounded so a hung pip / PyPI stall can't run to the 6-hour default.
+        timeout-minutes: 10
         run: |
           python3 -m venv test-venv
           ./test-venv/bin/pip install --upgrade pip
@@ -98,10 +112,10 @@ jobs:
 
       - name: Run hardware test suite
         working-directory: test
-        # Capped well under the job's own 60-minute budget so a hang here
-        # can't eat the time the "Restore boards" step below needs - that
-        # step is the one thing standing between a wedged run and the
-        # runner being reset with a board stuck in BOOTSEL.
+        # Capped so a hang in the tests can't run indefinitely and starve the
+        # "Restore boards" step below - that step is the one thing standing
+        # between a wedged run and the runner being reset with a board stuck
+        # in BOOTSEL.
         timeout-minutes: 20
         env:
           # Passed via env rather than --picotool: a CLI option whose value
