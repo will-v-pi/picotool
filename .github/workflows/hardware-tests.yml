@@ -18,13 +18,6 @@ on:
       - '**.md'
   workflow_dispatch:
 
-# Only one hardware run at a time - these are physical, shared boards. Queue
-# rather than cancel, so an in-progress flash/reboot cycle is never killed
-# mid-way.
-concurrency:
-  group: picotool-hardware-tests
-  cancel-in-progress: false
-
 jobs:
   hardware-tests:
     name: Hardware tests
@@ -96,9 +89,18 @@ jobs:
 
       - name: Run hardware test suite
         working-directory: test
+        env:
+          # Passed via env rather than --picotool: a CLI option whose value
+          # resolves to a real path outside test/ confuses pytest's rootdir/
+          # conftest auto-detection (it gets treated as an extra collection
+          # arg before conftest.py - and its --picotool addoption - has been
+          # loaded), so "--picotool ../build/picotool" fails with
+          # "unrecognized arguments: --picotool" even though --picotool is a
+          # valid, registered option. conftest.py already falls back to this
+          # env var, so just don't pass the flag at all.
+          PICOTOOL: ${{ github.workspace }}/build/picotool
         run: |
           ./test-venv/bin/python -m pytest -v --tb=short \
-            --picotool ../build/picotool \
             --boards rp2040,rp2350 \
             --require-boards
 
