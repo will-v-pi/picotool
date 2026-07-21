@@ -12,13 +12,15 @@ Design notes
 * USB enumeration is done with `lsusb`, which gives bus / address / product-id
   without ever poking the devices.  BOOTSEL devices are identified purely by
   product id (0x0003 = RP2040, 0x000f = RP2350).
-* `picotool info -a` is the only reliable way to map a *running application* USB
-  device back to its chip. When any device is in BOOTSEL, though, `info -a`
-  reports *that* device and does not emit the "RPxxxx device at bus N, address
-  M" lines for the running-app boards (verified on 2.3.1-develop) - and those
-  lines are exactly what `app_selector`/`app_visible` parse. So the harness
-  calls `ensure_no_bootsel()` first, rebooting any stray BOOTSEL devices back
-  to application mode, before relying on that enumeration.
+* A *running application* board is mapped back to its chip straight from its
+  USB product id (see APP_PIDS) - the SDK's stdio PIDs are distinct per chip -
+  so `app_selector` never has to poke the device or clear BOOTSEL first.
+* `picotool info -a` is still used where the app's *identity* matters, not just
+  its presence (`app_visible`, `connected_chips`). When any device is in
+  BOOTSEL, though, `info -a` reports *that* device and does not emit the
+  "RPxxxx device at bus N, address M" lines those parse (verified on
+  2.3.1-develop), so they call `ensure_no_bootsel()` first, rebooting any stray
+  BOOTSEL devices back to application mode before relying on that enumeration.
   (This is *not* about a crash: the older develop `info_command::execute`
   SIGSEGV with a mixed BOOTSEL/app pair was fixed in #338 - see
   test_info_device.py - and `info -a` now runs cleanly in every combination.)
@@ -37,6 +39,13 @@ VENDOR_ID = 0x2E8A
 PROBE_PID = 0x000C
 # product id -> chip, for devices in BOOTSEL mode
 BOOTSEL_PIDS = {0x0003: "rp2040", 0x000F: "rp2350"}
+# product id -> chip, for a board running the SDK's USB-stdio application
+# (the Pico SDK CDC PIDs - see https://github.com/raspberrypi/usb-pid). These
+# are what the suite's own example binaries enumerate as, and they're distinct
+# per chip, so a running app can be mapped to its chip straight from lsusb
+# without querying the device. Confirmed on the rig by BOOTSEL round-trip:
+# 0x000a reboots to 0x0003 (RP2040), 0x0009 reboots to 0x000f (RP2350).
+APP_PIDS = {0x000A: "rp2040", 0x0009: "rp2350"}
 
 # OpenOCD wiring per chip. There is deliberately no default *serial* here - a
 # debug-probe serial number is unique to one physical rig, so baking one in
@@ -218,20 +227,19 @@ class DeviceManager:
     def app_selector(self, chip: str, retries: int = 5) -> list[str] | None:
         """USB selector for `chip` running an application, or None.
 
-        Uses `picotool info -a`, so first makes sure nothing is in BOOTSEL:
-        while a BOOTSEL device is present `info -a` reports that device instead
-        of enumerating the running-app boards this parses (see module docstring).
-        Retries a few times because a board that has just re-enumerated (e.g.
-        right after a teardown) can be transiently absent from the listing.
+        Maps the running-app USB PID to a chip straight from `lsusb` (see
+        APP_PIDS), so - unlike `info -a` - it needs neither the device to be
+        poked nor BOOTSEL to be cleared first, and it's unaffected by any other
+        board being in BOOTSEL. Retries a few times because a board that has
+        just re-enumerated (e.g. right after a teardown) can be transiently
+        absent from the listing. Returns None for a board running a non-USB app
+        (e.g. blink) or firmware with a non-SDK PID (MicroPython/CircuitPython);
+        the caller (ensure_bootsel) then falls back to the debug probe.
         """
         for attempt in range(retries):
-            self.ensure_no_bootsel()
-            res = self.pt.run("info", "-a", timeout=30)
-            for m in re.finditer(
-                r"(RP2040|RP2350) device at bus (\d+), address (\d+)", res.out
-            ):
-                if m.group(1).lower() == chip:
-                    return ["--bus", m.group(2), "--address", m.group(3)]
+            for d in lsusb_rp_devices():
+                if APP_PIDS.get(d.pid) == chip:
+                    return d.selector
             if attempt < retries - 1:
                 time.sleep(1.0)
         return None
