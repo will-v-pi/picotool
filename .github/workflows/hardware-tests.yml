@@ -15,6 +15,10 @@ name: Hardware Tests (RP2040 + RP2350)
 # the run_otp_fpga workflow_dispatch checkbox, against a dedicated `fpga`
 # runner rather than the real pico/pico2 boards - since --run-otp burns
 # one-way OTP fuses, it must never run against real silicon in CI.
+#
+# select-suite picks which variant's matrix entry to run: jobs.<id>.if can't
+# see the matrix context (only runs-on/steps/env can), so the choice has to
+# be made before the matrix is expanded, in a separate job.
 on:
   push:
     paths-ignore:
@@ -33,22 +37,26 @@ on:
         default: false
 
 jobs:
+  select-suite:
+    name: Select test suite
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - id: select
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.run_otp_fpga }}" == "true" ]]; then
+            SUITE='{"suite":"rp2350-otp-fpga","run_otp_fpga":true,"runner_tags":["self-hosted","linux","arm64","trixie","fpga"],"pytest_args":"--board rp2350 --run-otp","restore_boards_args":"rp2350"}'
+          else
+            SUITE='{"suite":"rp2040-rp2350","run_otp_fpga":false,"runner_tags":["self-hosted","linux","arm64","trixie","pico","pico2"],"pytest_args":"--boards rp2040,rp2350","restore_boards_args":"rp2040 rp2350"}'
+          fi
+          echo "matrix={\"include\":[$SUITE]}" >> "$GITHUB_OUTPUT"
+
   hardware-tests:
-    if: ${{ (matrix.run_otp_fpga == true) == (github.event_name == 'workflow_dispatch' && inputs.run_otp_fpga == true) }}
+    needs: select-suite
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - suite: rp2040-rp2350
-            run_otp_fpga: false
-            runner_tags: [self-hosted, linux, arm64, trixie, pico, pico2]
-            pytest_args: --boards rp2040,rp2350
-            restore_boards_args: rp2040 rp2350
-          - suite: rp2350-otp-fpga
-            run_otp_fpga: true
-            runner_tags: [self-hosted, linux, arm64, trixie, fpga]
-            pytest_args: --board rp2350 --run-otp
-            restore_boards_args: rp2350
+      matrix: ${{ fromJSON(needs.select-suite.outputs.matrix) }}
     name: Hardware tests (${{ matrix.suite }})
     runs-on: ${{ matrix.runner_tags }}
     defaults:
