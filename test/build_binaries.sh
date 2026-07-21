@@ -105,15 +105,16 @@ ensure_repo "$PICO_EXAMPLES_PATH" "$PICO_EXAMPLES_REPO" "$PICO_EXAMPLES_BRANCH" 
 # Falls back to the old per-build fetch behaviour if no build is found.
 ensure_shared_picotool() {
     if [ ! -f "$PICOTOOL_BUILD_DIR/CMakeCache.txt" ] || [ ! -x "$PICOTOOL_BUILD_DIR/picotool" ]; then
-        echo "  (no pre-built picotool at $PICOTOOL_BUILD_DIR - each build below will fetch/build its own)"
+        echo "::warning :: (no pre-built picotool at $PICOTOOL_BUILD_DIR - each build below will fetch/build its own)"
         return
     fi
 
     local install_dir="$BUILD_ROOT/picotool-install"
     echo "== reusing already-built picotool at $PICOTOOL_BUILD_DIR =="
-    cmake -S "$REPO_ROOT" -B "$PICOTOOL_BUILD_DIR" -D PICOTOOL_FLAT_INSTALL=1 >/dev/null
+    cmake -S "$REPO_ROOT" -B "$PICOTOOL_BUILD_DIR" -D PICOTOOL_FLAT_INSTALL=1 -D CMAKE_INSTALL_PREFIX="$install_dir" >/dev/null
+    cmake --build "$PICOTOOL_BUILD_DIR" >/dev/null
     rm -rf "$install_dir"
-    cmake --install "$PICOTOOL_BUILD_DIR" --prefix "$install_dir" >/dev/null
+    cmake --install "$PICOTOOL_BUILD_DIR" >/dev/null
 
     export picotool_DIR="$install_dir/picotool"
     echo "  picotool_DIR = $picotool_DIR"

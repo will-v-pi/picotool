@@ -62,9 +62,18 @@ jobs:
         run: git submodule update --init --depth 1 lib/tinyusb lib/mbedtls
 
       - name: Build picotool
+        # Always install (never just build in-place): PICOTOOL_FLAT_INSTALL +
+        # CMAKE_INSTALL_PREFIX is BUILDING.md's documented custom-path install
+        # (see "Custom Path Installation"), and gives every downstream step -
+        # the test suite, build_binaries.sh's picotool_DIR reuse, cleanup - one
+        # consistent installed binary to point at instead of a raw build tree.
         run: |
-          cmake -S . -B build -G Ninja -D PICO_SDK_PATH="${{ github.workspace }}/pico-sdk"
+          cmake -S . -B build -G Ninja \
+            -D PICO_SDK_PATH="${{ github.workspace }}/pico-sdk" \
+            -D PICOTOOL_FLAT_INSTALL=1 \
+            -D CMAKE_INSTALL_PREFIX="${{ github.workspace }}/install"
           cmake --build build
+          cmake --install build
 
       - name: Build test firmware binaries
         working-directory: test
@@ -98,7 +107,7 @@ jobs:
           # "unrecognized arguments: --picotool" even though --picotool is a
           # valid, registered option. conftest.py already falls back to this
           # env var, so just don't pass the flag at all.
-          PICOTOOL: ${{ github.workspace }}/build/picotool
+          PICOTOOL: ${{ github.workspace }}/install/picotool/picotool
         run: |
           ./test-venv/bin/python -m pytest -v --tb=short \
             --boards rp2040,rp2350 \
@@ -111,4 +120,4 @@ jobs:
         if: always()
         working-directory: test
         continue-on-error: true
-        run: ./test-venv/bin/python ci_restore_boards.py ../build/picotool rp2040 rp2350
+        run: ./test-venv/bin/python ci_restore_boards.py ${{ github.workspace }}/install/picotool/picotool rp2040 rp2350
