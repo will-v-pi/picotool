@@ -87,7 +87,10 @@ def _flip_byte_in_first_segment(src, dst):
     data[0x2000] ^= 0xFF
     open(dst, "wb").write(data)
 
-
+@pytest.mark.skipif(
+    ENABLE_SECURE_BOOT,
+    reason="TestSecureBootEnforcement used instead of TestProvisionBootKey when ENABLE_SECURE_BOOT=1",
+)
 class TestProvisionBootKey:
     """Burns a boot key slot; does NOT enable secure boot enforcement."""
 

@@ -4,11 +4,17 @@ name: Hardware Tests (RP2040 + RP2350)
 # (see test/README.md and test/DEBUG_PROBES.md-style setup: a Pico + Pico 2,
 # each wired both to native USB and to a debug probe).
 #
-# Deliberately never passes --run-otp: OTP is one-way, and this workflow is
-# meant to run against real silicon, not an FPGA. The OTP *device* tests
-# (test_otp_device.py, test_otp_secure_boot.py) stay skipped by the suite's
-# own default gating - see test/README.md's "OTP tests" section - so nothing
-# here needs to (or should) special-case them further.
+# On push/PR (and a plain manual run) this only exercises the default
+# rp2040+rp2350 hardware suite, and deliberately never passes --run-otp: OTP
+# is one-way, and that suite runs against real silicon, not an FPGA. The OTP
+# *device* tests (test_otp_device.py, test_otp_secure_boot.py) stay skipped
+# by the suite's own default gating - see test/README.md's "OTP tests"
+# section - so nothing here needs to (or should) special-case them further.
+#
+# The OTP suite instead runs as an opt-in second variant below, gated behind
+# the run_otp_fpga workflow_dispatch checkbox, against a dedicated `fpga`
+# runner rather than the real pico/pico2 boards - since --run-otp burns
+# one-way OTP fuses, it must never run against real silicon in CI.
 on:
   push:
     paths-ignore:
@@ -17,11 +23,34 @@ on:
     paths-ignore:
       - '**.md'
   workflow_dispatch:
+    inputs:
+      run_otp_fpga:
+        description: >-
+          Run the OTP suite (--board rp2350 --run-otp) against the fpga
+          runner instead of the usual rp2040+rp2350 hardware suite. OTP
+          fuses are one-way, so this must stay off real silicon.
+        type: boolean
+        default: false
 
 jobs:
   hardware-tests:
-    name: Hardware tests
-    runs-on: [self-hosted, linux, arm64, trixie, pico, pico2]
+    if: ${{ (matrix.run_otp_fpga == true) == (github.event_name == 'workflow_dispatch' && inputs.run_otp_fpga == true) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: rp2040-rp2350
+            run_otp_fpga: false
+            runner_tags: [self-hosted, linux, arm64, trixie, pico, pico2]
+            pytest_args: --boards rp2040,rp2350
+            restore_boards_args: rp2040 rp2350
+          - suite: rp2350-otp-fpga
+            run_otp_fpga: true
+            runner_tags: [self-hosted, linux, arm64, trixie, fpga]
+            pytest_args: --board rp2350 --run-otp
+            restore_boards_args: rp2350
+    name: Hardware tests (${{ matrix.suite }})
+    runs-on: ${{ matrix.runner_tags }}
     defaults:
       run:
         shell: bash
@@ -134,9 +163,16 @@ jobs:
           # valid, registered option. conftest.py already falls back to this
           # env var, so just don't pass the flag at all.
           PICOTOOL: ${{ github.workspace }}/install/picotool/picotool
+          # Only for the OTP/FPGA variant: TestSecureBootEnforcement's
+          # one-way, whole-chip CRIT1.SECURE_BOOT_ENABLE fuse needs this
+          # explicit second opt-in on top of --run-otp - see
+          # test/README.md's "OTP tests" section. Left unset (rather than
+          # "0") for the other variant, matching test_otp_secure_boot.py's
+          # own `== "1"` check.
+          PICOTOOL_TEST_ENABLE_SECURE_BOOT: ${{ matrix.run_otp_fpga && '1' || '' }}
         run: |
           ./test-venv/bin/python -m pytest -v --tb=short \
-            --boards rp2040,rp2350 \
+            ${{ matrix.pytest_args }} \
             --require-boards
 
       - name: Restore boards to a known-good app
@@ -149,4 +185,4 @@ jobs:
         if: always()
         working-directory: test
         timeout-minutes: 5
-        run: ./test-venv/bin/python ci_restore_boards.py ${{ github.workspace }}/install/picotool/picotool rp2040 rp2350
+        run: ./test-venv/bin/python ci_restore_boards.py ${{ github.workspace }}/install/picotool/picotool ${{ matrix.restore_boards_args }}
