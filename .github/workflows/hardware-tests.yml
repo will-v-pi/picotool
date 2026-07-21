@@ -98,6 +98,11 @@ jobs:
 
       - name: Run hardware test suite
         working-directory: test
+        # Capped well under the job's own 60-minute budget so a hang here
+        # can't eat the time the "Restore boards" step below needs - that
+        # step is the one thing standing between a wedged run and the
+        # runner being reset with a board stuck in BOOTSEL.
+        timeout-minutes: 45
         env:
           # Passed via env rather than --picotool: a CLI option whose value
           # resolves to a real path outside test/ confuses pytest's rootdir/
@@ -114,10 +119,12 @@ jobs:
             --require-boards
 
       - name: Restore boards to a known-good app
-        # Best-effort cleanup: if a test left a board on a partition table or
-        # other non-default state, make sure the next run (or the next human
-        # to pick up a board) starts from something ordinary.
+        # Always runs, even on failure/timeout above, so a test that left a
+        # board on a partition table or in BOOTSEL doesn't affect the next
+        # run. Deliberately NOT continue-on-error: this runner misbehaves on
+        # its next reset if a board is left in BOOTSEL, so a board that's
+        # still stuck after ci_restore_boards.py's own retries should fail
+        # the job loudly rather than pass silently.
         if: always()
         working-directory: test
-        continue-on-error: true
         run: ./test-venv/bin/python ci_restore_boards.py ${{ github.workspace }}/install/picotool/picotool rp2040 rp2350
