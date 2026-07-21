@@ -21,7 +21,16 @@ class Result:
 
     @property
     def out(self) -> str:
-        """stdout and stderr combined - picotool spreads messages across both."""
+        """stdout and stderr combined.
+
+        picotool writes *everything* to stdout - normal output, usage, and even
+        the `ERROR: ...` from its top-level exception handlers; it never writes
+        to stderr itself. stderr belongs to the libusb backend (confirmed: with
+        LIBUSB_DEBUG set, libusb's log lines land on stderr while picotool's
+        output stays on stdout). libusb is silent in normal operation, but
+        combining the streams means any backend diagnostics it does emit - e.g.
+        USB permission / enumeration errors - are still captured here.
+        """
         return self.stdout + self.stderr
 
     def __str__(self) -> str:
