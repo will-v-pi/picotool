@@ -33,12 +33,13 @@
 #                             default: test/_deps
 #   PICOTOOL_TEST_BUILD_ROOT  scratch build tree, default: test/_work
 #   PICOTOOL_TEST_JOBS        parallel build jobs, default: nproc
-#   PICOTOOL_BUILD_DIR        an already-built picotool build directory to
-#                             reuse, instead of letting each pico-sdk build
-#                             below fetch and build its own copy from git.
-#                             Default: ../build (picotool's own top-level
-#                             build dir). Ignored if it doesn't look like a
-#                             built picotool.
+#   PICOTOOL_INSTALL_DIR      an already-installed picotool (built and
+#                             installed with -D PICOTOOL_FLAT_INSTALL=1 - see
+#                             BUILDING.md's "Custom Path Installation"), reused
+#                             instead of letting each pico-sdk build below
+#                             fetch and build its own copy from git. Default:
+#                             ../install. Ignored if it doesn't look like a
+#                             flat picotool install.
 #
 set -euo pipefail
 
@@ -57,15 +58,15 @@ PICO_EXAMPLES_PATH="${PICO_EXAMPLES_PATH:-$DEPS_DIR/pico-examples}"
 BUILD_ROOT="${PICOTOOL_TEST_BUILD_ROOT:-$HERE/_work}"
 OUT_ROOT="$HERE/binaries"
 JOBS="${PICOTOOL_TEST_JOBS:-$(nproc 2>/dev/null || echo 4)}"
-PICOTOOL_BUILD_DIR="${PICOTOOL_BUILD_DIR:-$REPO_ROOT/build}"
+PICOTOOL_INSTALL_DIR="${PICOTOOL_INSTALL_DIR:-$REPO_ROOT/install}"
 
 echo "picotool test binary builder"
-echo "  PICO_SDK_PATH      = $PICO_SDK_PATH"
-echo "  PICO_EXAMPLES_PATH = $PICO_EXAMPLES_PATH"
-echo "  BUILD_ROOT         = $BUILD_ROOT"
-echo "  OUT_ROOT           = $OUT_ROOT"
-echo "  JOBS               = $JOBS"
-echo "  PICOTOOL_BUILD_DIR = $PICOTOOL_BUILD_DIR"
+echo "  PICO_SDK_PATH        = $PICO_SDK_PATH"
+echo "  PICO_EXAMPLES_PATH   = $PICO_EXAMPLES_PATH"
+echo "  BUILD_ROOT           = $BUILD_ROOT"
+echo "  OUT_ROOT             = $OUT_ROOT"
+echo "  JOBS                 = $JOBS"
+echo "  PICOTOOL_INSTALL_DIR = $PICOTOOL_INSTALL_DIR"
 echo
 
 # ensure_repo <dir> <url> <branch> <label> <path-env-var-name>
@@ -94,33 +95,23 @@ ensure_repo "$PICO_EXAMPLES_PATH" "$PICO_EXAMPLES_REPO" "$PICO_EXAMPLES_BRANCH" 
 # ensure_shared_picotool: pico-sdk's pico_init_picotool() (tools/CMakeLists.txt)
 # has each project fetch-and-build its own copy of picotool from git unless
 # find_package(picotool CONFIG) already succeeds - which it will if picotool_DIR
-# points at an installed CMake package config. If we've already built picotool
-# ourselves (PICOTOOL_BUILD_DIR), install its config to a flat prefix
-# (PICOTOOL_FLAT_INSTALL puts it at <prefix>/picotool, exactly where
-# pico_init_picotool() looks) and export picotool_DIR so every cmake -S/-B
-# call below (6 of them: 2 example builds + 4 tool builds) reuses that one
-# build instead of each independently fetching+building picotool from git.
-# Reconfiguring an existing build dir with a new -D flag is safe and doesn't
-# trigger a rebuild - PICOTOOL_FLAT_INSTALL only affects install destinations.
-# Falls back to the old per-build fetch behaviour if no build is found.
+# points at an installed CMake package config. If PICOTOOL_INSTALL_DIR already
+# holds a flat picotool install (picotoolConfig.cmake alongside the binary -
+# see BUILDING.md's "Custom Path Installation"), just point picotool_DIR at it
+# so every cmake -S/-B call below (6 of them: 2 example builds + 4 tool
+# builds) reuses that one install instead of each independently
+# fetching+building picotool from git. Falls back to the old per-build fetch
+# behaviour if no install is found.
 ensure_shared_picotool() {
-    if [ ! -f "$PICOTOOL_BUILD_DIR/CMakeCache.txt" ] || [ ! -x "$PICOTOOL_BUILD_DIR/picotool" ]; then
-        echo "::warning :: (no pre-built picotool at $PICOTOOL_BUILD_DIR - each build below will fetch/build its own)"
+    if [ ! -f "$PICOTOOL_INSTALL_DIR/picotool/picotoolConfig.cmake" ] || [ ! -x "$PICOTOOL_INSTALL_DIR/picotool/picotool" ]; then
+        echo "::warning :: (no picotool install at $PICOTOOL_INSTALL_DIR - each build below will fetch/build its own)"
         return
     fi
 
-    local install_dir="$BUILD_ROOT/picotool-install"
-    echo "== reusing already-built picotool at $PICOTOOL_BUILD_DIR =="
-    cmake -S "$REPO_ROOT" -B "$PICOTOOL_BUILD_DIR" -D PICOTOOL_FLAT_INSTALL=1 -D CMAKE_INSTALL_PREFIX="$install_dir" >/dev/null
-    cmake --build "$PICOTOOL_BUILD_DIR" >/dev/null
-    rm -rf "$install_dir"
-    cmake --install "$PICOTOOL_BUILD_DIR" >/dev/null
-
-    export picotool_DIR="$install_dir/picotool"
-    echo "  picotool_DIR = $picotool_DIR"
+    export picotool_DIR="$PICOTOOL_INSTALL_DIR/picotool"
+    echo "== reusing installed picotool: picotool_DIR = $picotool_DIR =="
 }
 
-mkdir -p "$BUILD_ROOT"
 ensure_shared_picotool
 
 # tinyusb is a submodule required for pico_stdio_usb, which hello_usb,
