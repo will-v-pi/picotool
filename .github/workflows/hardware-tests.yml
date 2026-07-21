@@ -30,7 +30,7 @@ on:
     inputs:
       run_otp_fpga:
         description: >-
-          Run the OTP suite (--board rp2350 --run-otp) against the fpga
+          Run the OTP suite (--boards rp2350 --run-otp) against the fpga
           runner instead of the usual rp2040+rp2350 hardware suite. OTP
           fuses are one-way, so this must stay off real silicon.
         type: boolean
@@ -46,7 +46,7 @@ jobs:
       - id: select
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.run_otp_fpga }}" == "true" ]]; then
-            SUITE='{"suite":"rp2350-otp-fpga","run_otp_fpga":true,"runner_tags":["self-hosted","linux","arm64","trixie","fpga"],"pytest_args":"--board rp2350 --run-otp","restore_boards_args":"rp2350"}'
+            SUITE='{"suite":"rp2350-otp-fpga","run_otp_fpga":true,"runner_tags":["self-hosted","linux","arm64","trixie","fpga"],"pytest_args":"--boards rp2350 --run-otp","restore_boards_args":"rp2350"}'
           else
             SUITE='{"suite":"rp2040-rp2350","run_otp_fpga":false,"runner_tags":["self-hosted","linux","arm64","trixie","pico","pico2"],"pytest_args":"--boards rp2040,rp2350","restore_boards_args":"rp2040 rp2350"}'
           fi

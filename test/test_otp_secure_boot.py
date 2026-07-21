@@ -264,7 +264,7 @@ class TestSecureBootEnforcement:
                 "run - rollback protection did not reject it"
             )
 
-            # --- negative: tampered (bad signature) -> must NOT boot --------
+            # --- negative: UNVERSIONED (no rollback version) -> must NOT boot
             assert not boots(signed_nv), (
                 "an unversioned image booted after a versioned one had already "
                 "run - rollback protection did not reject it"
