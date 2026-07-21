@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
 from pathlib import Path
 
@@ -10,10 +9,12 @@ import pytest
 
 from lib.binaries import BinarySet, BINARIES_ROOT
 from lib.devices import (
+    APP_PIDS,
     BOARD_CONFIGS,
+    BOOTSEL_PIDS,
     Board,
     DeviceManager,
-    bootsel_devices,
+    lsusb_rp_devices,
 )
 from lib.picotool import Picotool
 
@@ -170,11 +171,14 @@ def connected_chips(request, device_manager, selected_chips) -> list[str]:
     present: set[str] = set()
     for attempt in range(4):
         dm.ensure_no_bootsel()
-        res = dm.pt.run("info", "-a", timeout=30)
-        for m in re.finditer(r"(RP2040|RP2350) device", res.out):
-            present.add(m.group(1).lower())
-        for chip, _dev in bootsel_devices():
-            present.add(chip)
+        # Detect chips from lsusb by USB PID (app PIDs + BOOTSEL PIDs) - no
+        # `picotool info` needed. A board on non-SDK firmware (MicroPython /
+        # CircuitPython) matches neither and is picked up by the probe-recovery
+        # fallback below.
+        for d in lsusb_rp_devices():
+            chip = APP_PIDS.get(d.pid) or BOOTSEL_PIDS.get(d.pid)
+            if chip:
+                present.add(chip)
         if all(c in present for c in selected_chips):
             break
         time.sleep(1.0)

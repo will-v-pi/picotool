@@ -12,18 +12,16 @@ Design notes
 * USB enumeration is done with `lsusb`, which gives bus / address / product-id
   without ever poking the devices.  BOOTSEL devices are identified purely by
   product id (0x0003 = RP2040, 0x000f = RP2350).
-* A *running application* board is mapped back to its chip straight from its
-  USB product id (see APP_PIDS) - the SDK's stdio PIDs are distinct per chip -
-  so `app_selector` never has to poke the device or clear BOOTSEL first.
-* `picotool info -a` is still used where the app's *identity* matters, not just
-  its presence (`app_visible`, `connected_chips`). When any device is in
-  BOOTSEL, though, `info -a` reports *that* device and does not emit the
-  "RPxxxx device at bus N, address M" lines those parse (verified on
-  2.3.1-develop), so they call `ensure_no_bootsel()` first, rebooting any stray
-  BOOTSEL devices back to application mode before relying on that enumeration.
-  (This is *not* about a crash: the older develop `info_command::execute`
-  SIGSEGV with a mixed BOOTSEL/app pair was fixed in #338 - see
-  test_info_device.py - and `info -a` now runs cleanly in every combination.)
+* Discovery is done entirely from `lsusb`, by USB product id: BOOTSEL boards
+  via BOOTSEL_PIDS, running-app boards via APP_PIDS (the SDK's stdio PIDs,
+  which are distinct per chip). So nothing in the discovery / state paths
+  (`app_selector`, `app_visible`, conftest's `connected_chips`) has to poke a
+  device with `picotool info` or clear BOOTSEL first - and a board running
+  non-SDK firmware (MicroPython/CircuitPython) simply doesn't match and is
+  recovered via the debug probe.
+  (`picotool info`/`info -a` is exercised only by the tests themselves, e.g.
+  test_info_device.py. The older develop `info_command::execute` SIGSEGV with a
+  mixed BOOTSEL/app pair was fixed in #338, so those tests run cleanly.)
 """
 from __future__ import annotations
 
@@ -301,16 +299,15 @@ class DeviceManager:
         raise DeviceError(f"could not put {board.chip} into BOOTSEL mode")
 
     def app_visible(self, chip: str) -> bool:
-        """Whether `chip` is enumerated as a USB application right now.
+        """Whether `chip` is enumerated as a running USB application right now.
 
-        Uses `info -a`, so only valid when nothing is in BOOTSEL: with a
-        BOOTSEL device present `info -a` reports that device rather than
-        enumerating running-app boards, so it can't answer this reliably.
+        Reads it from lsusb by the SDK stdio PID (see APP_PIDS) - the same
+        source as app_selector - so it needs no `info` and is unaffected by any
+        other board being in BOOTSEL. A board running a non-USB app (blink) or
+        non-SDK firmware (MicroPython/CircuitPython) reads as not visible, which
+        is what callers want (they restore/recover it).
         """
-        if self.any_bootsel():
-            return False
-        res = self.pt.run("info", "-a", timeout=30)
-        return f"{chip.upper()} device at bus" in res.out
+        return any(APP_PIDS.get(d.pid) == chip for d in lsusb_rp_devices())
 
     def wait_app_visible(self, chip: str, timeout: float | None = None) -> bool:
         """Poll until `chip` shows up as a USB application (allow enumeration)."""
@@ -334,16 +331,10 @@ class DeviceManager:
             # In BOOTSEL: load a USB app and reboot into it.
             self.flash_app(board)
             return
-        if reflash or (not self.any_bootsel() and not self.app_visible(board.chip)):
+        if reflash or not self.app_visible(board.chip):
             # Running a non-USB / unknown image - get to BOOTSEL and restore.
-            # The `not any_bootsel()` guard avoids a false negative: while some
-            # *other* board sits in BOOTSEL, app_visible() returns False
-            # defensively (info -a reports the BOOTSEL device rather than
-            # enumerating running-app boards). Without the guard we'd needlessly
-            # reflash this healthy board just because the other one is in
-            # BOOTSEL; skipping is safe because a genuinely-broken board is
-            # caught on a later pass once nothing is in BOOTSEL (and CI cleanup
-            # forces reflash).
+            # (app_visible reads lsusb by PID, so it's reliable even when the
+            # other board is in BOOTSEL - no cross-board guard needed.)
             self.ensure_bootsel(board)
             self.flash_app(board)
 
