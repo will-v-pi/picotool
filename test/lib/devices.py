@@ -13,11 +13,15 @@ Design notes
   without ever poking the devices.  BOOTSEL devices are identified purely by
   product id (0x0003 = RP2040, 0x000f = RP2350).
 * `picotool info -a` is the only reliable way to map a *running application* USB
-  device back to its chip, but on the develop branch it SEGFAULTS when any
-  device is in BOOTSEL while another is running an app (crash in
-  info_command::execute).  To avoid tripping that bug the harness never runs
-  `info -a` while a BOOTSEL device is present - `ensure_no_bootsel()` is called
-  first, which reboots any stray BOOTSEL devices back to application mode.
+  device back to its chip. When any device is in BOOTSEL, though, `info -a`
+  reports *that* device and does not emit the "RPxxxx device at bus N, address
+  M" lines for the running-app boards (verified on 2.3.1-develop) - and those
+  lines are exactly what `app_selector`/`app_visible` parse. So the harness
+  calls `ensure_no_bootsel()` first, rebooting any stray BOOTSEL devices back
+  to application mode, before relying on that enumeration.
+  (This is *not* about a crash: the older develop `info_command::execute`
+  SIGSEGV with a mixed BOOTSEL/app pair was fixed in #338 - see
+  test_info_device.py - and `info -a` now runs cleanly in every combination.)
 """
 from __future__ import annotations
 
@@ -214,10 +218,11 @@ class DeviceManager:
     def app_selector(self, chip: str, retries: int = 5) -> list[str] | None:
         """USB selector for `chip` running an application, or None.
 
-        Uses `picotool info -a`, so first makes sure nothing is in BOOTSEL to
-        dodge the develop-branch info_command crash. Retries a few times because
-        a board that has just re-enumerated (e.g. right after a teardown) can be
-        transiently absent from the listing.
+        Uses `picotool info -a`, so first makes sure nothing is in BOOTSEL:
+        while a BOOTSEL device is present `info -a` reports that device instead
+        of enumerating the running-app boards this parses (see module docstring).
+        Retries a few times because a board that has just re-enumerated (e.g.
+        right after a teardown) can be transiently absent from the listing.
         """
         for attempt in range(retries):
             self.ensure_no_bootsel()
@@ -290,7 +295,9 @@ class DeviceManager:
     def app_visible(self, chip: str) -> bool:
         """Whether `chip` is enumerated as a USB application right now.
 
-        Uses `info -a`, so only valid when nothing is in BOOTSEL.
+        Uses `info -a`, so only valid when nothing is in BOOTSEL: with a
+        BOOTSEL device present `info -a` reports that device rather than
+        enumerating running-app boards, so it can't answer this reliably.
         """
         if self.any_bootsel():
             return False
@@ -322,12 +329,13 @@ class DeviceManager:
         if reflash or (not self.any_bootsel() and not self.app_visible(board.chip)):
             # Running a non-USB / unknown image - get to BOOTSEL and restore.
             # The `not any_bootsel()` guard avoids a false negative: while some
-            # *other* board sits in BOOTSEL, app_visible() can't use `info -a`
-            # (it segfaults on develop in that state and so returns False
-            # defensively). Without the guard we'd needlessly reflash this
-            # healthy board just because the other one is in BOOTSEL; skipping
-            # is safe because a genuinely-broken board is caught on a later
-            # pass once nothing is in BOOTSEL (and CI cleanup forces reflash).
+            # *other* board sits in BOOTSEL, app_visible() returns False
+            # defensively (info -a reports the BOOTSEL device rather than
+            # enumerating running-app boards). Without the guard we'd needlessly
+            # reflash this healthy board just because the other one is in
+            # BOOTSEL; skipping is safe because a genuinely-broken board is
+            # caught on a later pass once nothing is in BOOTSEL (and CI cleanup
+            # forces reflash).
             self.ensure_bootsel(board)
             self.flash_app(board)
 
