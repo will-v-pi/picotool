@@ -1,0 +1,107 @@
+name: Hardware Tests (RP2040 + RP2350)
+
+# Runs the pytest suite in test/ against real boards on a self-hosted runner
+# (see test/README.md and test/DEBUG_PROBES.md-style setup: a Pico + Pico 2,
+# each wired both to native USB and to a debug probe).
+#
+# Deliberately never passes --run-otp: OTP is one-way, and this workflow is
+# meant to run against real silicon, not an FPGA. The OTP *device* tests
+# (test_otp_device.py, test_otp_secure_boot.py) stay skipped by the suite's
+# own default gating - see test/README.md's "OTP tests" section - so nothing
+# here needs to (or should) special-case them further.
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+# Only one hardware run at a time - these are physical, shared boards. Queue
+# rather than cancel, so an in-progress flash/reboot cycle is never killed
+# mid-way.
+concurrency:
+  group: picotool-hardware-tests
+  cancel-in-progress: false
+
+jobs:
+  hardware-tests:
+    name: Hardware tests
+    runs-on: [self-hosted, linux, arm64, trixie, pico, pico2]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout picotool
+        uses: actions/checkout@v7
+
+      - name: Check prerequisites
+        run: |
+          sudo apt install -y cmake ninja-build python3 build-essential gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+          sudo apt install -y openocd git
+
+      - name: Checkout Pico SDK (develop)
+        uses: actions/checkout@v7
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: develop
+          path: pico-sdk
+
+      - name: Checkout Pico Examples (develop)
+        uses: actions/checkout@v7
+        with:
+          repository: raspberrypi/pico-examples
+          ref: develop
+          path: pico-examples
+
+      - name: Fetch tinyusb submodule
+        # Only tinyusb is needed (pico_stdio_usb, used by hello_usb/serial/
+        # reset/anything) - not the full recursive submodule set (cyw43-driver/
+        # lwip/mbedtls/btstack), which is much heavier and unused here.
+        working-directory: pico-sdk
+        run: git submodule update --init --depth 1 lib/tinyusb
+
+      - name: Build picotool
+        run: |
+          cmake -S . -B build -G Ninja -D PICO_SDK_PATH="${{ github.workspace }}/pico-sdk"
+          cmake --build build
+
+      - name: Build test firmware binaries
+        working-directory: test
+        env:
+          PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+          PICO_EXAMPLES_PATH: ${{ github.workspace }}/pico-examples
+        run: ./build_binaries.sh
+
+      - name: Fetch MicroPython / CircuitPython firmware
+        working-directory: test
+        # Best-effort: test_bdev_firmware.py skips cleanly if these are absent,
+        # so a flaky download here shouldn't fail the whole run.
+        continue-on-error: true
+        run: ./fetch_firmware.sh
+
+      - name: Set up Python test environment
+        working-directory: test
+        run: |
+          python3 -m venv test-venv
+          ./test-venv/bin/pip install --upgrade pip
+          ./test-venv/bin/pip install -r requirements.txt
+
+      - name: Run hardware test suite
+        working-directory: test
+        run: |
+          ./test-venv/bin/python -m pytest -v --tb=short \
+            --picotool ../build/picotool \
+            --boards rp2040,rp2350 \
+            --require-boards
+
+      - name: Restore boards to a known-good app
+        # Best-effort cleanup: if a test left a board on a partition table or
+        # other non-default state, make sure the next run (or the next human
+        # to pick up a board) starts from something ordinary.
+        if: always()
+        working-directory: test
+        continue-on-error: true
+        run: ./test-venv/bin/python ci_restore_boards.py ../build/picotool rp2040 rp2350

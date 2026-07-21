@@ -145,6 +145,14 @@ honours picotool's `-f` reset interface, these tests require the debug probe
 ./test-venv/bin/python -m pytest -m "not slow"
 ```
 
+### CI
+
+`.github/workflows/hardware-tests.yml` runs this suite automatically on a
+self-hosted runner with real RP2040 + RP2350 boards attached (tags:
+`self-hosted, linux, arm64, bookworm, pico, pico2`). It never passes
+`--run-otp` - OTP tests stay skipped by the suite's own default gating, since
+CI runs against real silicon, never an FPGA.
+
 ### Useful options
 
 | Option | Meaning |
