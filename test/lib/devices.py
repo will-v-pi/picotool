@@ -14,14 +14,7 @@ Design notes
   product id (0x0003 = RP2040, 0x000f = RP2350).
 * Discovery is done entirely from `lsusb`, by USB product id: BOOTSEL boards
   via BOOTSEL_PIDS, running-app boards via APP_PIDS (the SDK's stdio PIDs,
-  which are distinct per chip). So nothing in the discovery / state paths
-  (`app_selector`, `app_visible`, conftest's `connected_chips`) has to poke a
-  device with `picotool info` or clear BOOTSEL first - and a board running
-  non-SDK firmware (MicroPython/CircuitPython) simply doesn't match and is
-  recovered via the debug probe.
-  (`picotool info`/`info -a` is exercised only by the tests themselves, e.g.
-  test_info_device.py. The older develop `info_command::execute` SIGSEGV with a
-  mixed BOOTSEL/app pair was fixed in #338, so those tests run cleanly.)
+  which are distinct per chip).
 """
 from __future__ import annotations
 
@@ -45,12 +38,6 @@ BOOTSEL_PIDS = {0x0003: "rp2040", 0x000F: "rp2350"}
 # 0x000a reboots to 0x0003 (RP2040), 0x0009 reboots to 0x000f (RP2350).
 APP_PIDS = {0x000A: "rp2040", 0x0009: "rp2350"}
 
-# OpenOCD wiring per chip. There is deliberately no default *serial* here - a
-# debug-probe serial number is unique to one physical rig, so baking one in
-# would silently target the wrong (or a nonexistent) probe on anyone else's
-# machine. Configure serials for your own rig with the PICOTOOL_TEST_PROBE_
-# <CHIP> environment variables (see README); with only one probe attached,
-# leaving them unset works fine - OpenOCD auto-selects the sole adapter.
 PROBE_CONFIG = {
     "rp2040": {"target": "target/rp2040.cfg", "multidrop": False},
     "rp2350": {"target": "target/rp2350.cfg", "multidrop": True},
@@ -128,11 +115,7 @@ def probe_targets_chip(
     Passive/non-destructive: for both chips this only performs an SWD connect +
     target examination (`init`), never a reset - confirmed by hand to leave a
     running application undisturbed whichever probe it's pointed at, including
-    "wrong" probe/chip combinations (which simply fail to connect). Deliberately
-    does NOT use RP2040's special rescue-DP mode: while useful for recovering a
-    truly bricked board, a *successful* rescue-DP connect leaves the target
-    halted in a low-level debug state that a plain `exit` doesn't resume from -
-    unsuitable for a passive detection probe run at every test session start.
+    "wrong" probe/chip combinations (which simply fail to connect).
     """
     cfg = PROBE_CONFIG[chip]
     cmd = [openocd, "-f", interface, "-c", f"adapter serial {serial}"]
@@ -226,9 +209,7 @@ class DeviceManager:
         """USB selector for `chip` running an application, or None.
 
         Maps the running-app USB PID to a chip straight from `lsusb` (see
-        APP_PIDS), so - unlike `info -a` - it needs neither the device to be
-        poked nor BOOTSEL to be cleared first, and it's unaffected by any other
-        board being in BOOTSEL. Retries a few times because a board that has
+        APP_PIDS). Retries a few times because a board that has
         just re-enumerated (e.g. right after a teardown) can be transiently
         absent from the listing. Returns None for a board running a non-USB app
         (e.g. blink) or firmware with a non-SDK PID (MicroPython/CircuitPython);
@@ -302,8 +283,7 @@ class DeviceManager:
         """Whether `chip` is enumerated as a running USB application right now.
 
         Reads it from lsusb by the SDK stdio PID (see APP_PIDS) - the same
-        source as app_selector - so it needs no `info` and is unaffected by any
-        other board being in BOOTSEL. A board running a non-USB app (blink) or
+        source as app_selector. A board running a non-USB app (blink) or
         non-SDK firmware (MicroPython/CircuitPython) reads as not visible, which
         is what callers want (they restore/recover it).
         """
@@ -320,12 +300,7 @@ class DeviceManager:
         )
 
     def ensure_app(self, board: "Board", reflash: bool = False):
-        """Leave `board` running a USB-visible, known-good application.
-
-        This deliberately restores hello_usb rather than just rebooting: a test
-        may have left a no-USB image (e.g. blink) or an empty flash, either of
-        which would make the board invisible to later `info -a` discovery.
-        """
+        """Leave `board` running a USB-visible, known-good application (hello_usb)."""
         dev = self.find_bootsel(board.chip)
         if dev is not None:
             # In BOOTSEL: load a USB app and reboot into it.
@@ -450,7 +425,7 @@ class DeviceManager:
         self._run_openocd(board, f"program {elf} verify reset exit")
 
     def boot_firmware_then_bootsel(self, board: "Board", firmware_uf2, boot_wait: float = 10.0):
-        """Flash `firmware_uf2`, let it boot (so it creates its embedded drive),
+        """Flash `firmware_uf2`, let it boot (e.g. so it creates its embedded drive),
         then return to BOOTSEL over SWD without erasing flash.
 
         Returns a BootselSession positioned on the board in BOOTSEL, from which

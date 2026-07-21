@@ -70,7 +70,7 @@ jobs:
         #   HAS_MBEDTLS=0 and the whole `seal` command (signing/hashing, used
         #   by test_seal_secure_boot.py, test_otp_secure_boot.py and the
         #   pre-existing test_seal_squash.py) is compiled out entirely, which
-        #   fails those tests with "unknown command: seal" - not a test bug.
+        #   fails those tests with "unknown command: seal".
         # Not the full recursive set (cyw43-driver/lwip/btstack), which is
         # much heavier and unused by anything this workflow builds.
         working-directory: pico-sdk
@@ -122,10 +122,7 @@ jobs:
 
       - name: Run hardware test suite
         working-directory: test
-        # Capped so a hang in the tests can't run indefinitely and starve the
-        # "Restore boards" step below - that step is the one thing standing
-        # between a wedged run and the runner being reset with a board stuck
-        # in BOOTSEL.
+        # ~15 min in practice; bounded since there's no job-level timeout.
         timeout-minutes: 30
         env:
           # Passed via env rather than --picotool: a CLI option whose value

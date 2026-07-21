@@ -1,6 +1,6 @@
 """`picotool bdev` against a block device declared via *binary info*.
 
-Unlike test_bdev.py (which uses a partition table to locate the block device),
+Unlike test_bdev_partition.py (which uses a partition table to locate the block device),
 here the block device is described by a BINARY_INFO_TYPE_BLOCK_DEVICE entry
 embedded in the firmware (the bi_bdev helper, tools/bi_bdev). picotool reads that
 straight out of flash and needs no `-p` / partition arguments - the same

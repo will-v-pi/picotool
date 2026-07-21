@@ -171,8 +171,8 @@ def connected_chips(request, device_manager, selected_chips) -> list[str]:
     present: set[str] = set()
     for attempt in range(4):
         dm.ensure_no_bootsel()
-        # Detect chips from lsusb by USB PID (app PIDs + BOOTSEL PIDs) - no
-        # `picotool info` needed. A board on non-SDK firmware (MicroPython /
+        # Detect chips from lsusb by USB PID (app PIDs + BOOTSEL PIDs). A board
+        # on non-SDK firmware (MicroPython /
         # CircuitPython) matches neither and is picked up by the probe-recovery
         # fallback below.
         for d in lsusb_rp_devices():
@@ -184,7 +184,7 @@ def connected_chips(request, device_manager, selected_chips) -> list[str]:
         time.sleep(1.0)
 
     # A board left running third-party firmware (MicroPython / CircuitPython)
-    # reports only as an "RP-series device" (no chip), so it is not detected
+    # uses a different PID, so it is not detected
     # above. If a selected chip is still missing, recover it via the debug probe
     # by re-flashing a known application, then re-check.
     missing = [c for c in selected_chips if c not in present]

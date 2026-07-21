@@ -20,19 +20,14 @@ import pytest
 
 pytestmark = [pytest.mark.hardware, pytest.mark.rp2350, pytest.mark.otp]
 
-# Unnamed, unallocated OTP data row. 0x0100 sits well inside the large
-# 0x00bf-0x0f48 gap with no named register at all (`otp list 0x100` matches
-# nothing) - confirmed on a real device. An EARLIER version of this default
-# (0x040) was wrong: that row is actually OTP_DATA_CRIT1 (DEBUG_DISABLE /
-# SECURE_DEBUG_DISABLE / SECURE_BOOT_ENABLE), discovered when a run against a
-# real FPGA left stray bits in one of its 8 redundant copies. Override with
-# PICOTOOL_TEST_OTP_ROW for your particular FPGA image (the row must not
+# Unnamed, unallocated OTP data row. Override with
+# PICOTOOL_TEST_OTP_ROW for your particular device (the row must not
 # already be programmed - OTP is write-once).
-SCRATCH_ROW = os.environ.get("PICOTOOL_TEST_OTP_ROW", "0x100")
+SCRATCH_ROW = os.environ.get("PICOTOOL_TEST_OTP_ROW", "0x300")
 SCRATCH_VALUE = "0x1234"  # 16-bit ECC value
 # A second, distinct scratch row for tests that must not collide with
 # SCRATCH_ROW (OTP is write-once, so two tests can't share one row).
-SCRATCH_ROW2 = os.environ.get("PICOTOOL_TEST_OTP_ROW2", "0x104")
+SCRATCH_ROW2 = os.environ.get("PICOTOOL_TEST_OTP_ROW2", "0x304")
 
 # Pages the permissions regression (#294) writes locks to. FPGA-resettable;
 # override for your image if these collide with something you care about.

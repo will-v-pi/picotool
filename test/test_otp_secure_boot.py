@@ -168,12 +168,18 @@ class TestSecureBootEnforcement:
         def seal(version, name):
             out = tmp_path / f"signed_{name}.elf"
             otp = tmp_path / f"otp_{name}.json"
-            assert device_manager.pt.run(
-                "seal", "--sign", str(elf), str(out), str(key), str(otp),
-                "--rollback", str(version),
-            ).ok
+            if version is not None:
+                assert device_manager.pt.run(
+                    "seal", "--sign", str(elf), str(out), str(key), str(otp),
+                    "--rollback", str(version),
+                ).ok
+            else:
+                assert device_manager.pt.run(
+                    "seal", "--sign", str(elf), str(out), str(key), str(otp),
+                ).ok
             return out, otp
 
+        signed_nv, _ = seal(None, "nv")  # unversioned - must be rejected once versioned has run
         signed_v1, otp_v1 = seal(1, "v1")  # older - must be rejected once v2 has run
         signed_v2, otp_v2 = seal(2, "v2")  # first boot - always allowed
         signed_v3, _ = seal(3, "v3")  # newer - always allowed, bumps the counter
@@ -248,6 +254,18 @@ class TestSecureBootEnforcement:
 
             # --- positive: NEWER is always allowed, bumps the counter -------
             assert boots(signed_v3), "a newer-versioned image failed to boot"
+
+            # --- negative: OLDER than what's recorded -> must NOT boot ------
+            assert not boots(signed_v2), (
+                "an older-versioned image booted after a newer one had already "
+                "run - rollback protection did not reject it"
+            )
+
+            # --- negative: tampered (bad signature) -> must NOT boot --------
+            assert not boots(signed_nv), (
+                "an unversioned image booted after a versioned one had already "
+                "run - rollback protection did not reject it"
+            )
         finally:
             # Best-effort: leave the board on the last known-good SIGNED image.
             # There is no "restore to unsigned" after this test - see the

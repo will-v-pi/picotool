@@ -19,7 +19,7 @@ pico-sdk and pico-examples.
 | `reboot` variants | `test_reboot.py` | **yes** |
 | `info` / `config` on a device (bug regressions) | `test_info_device.py` | **yes** |
 | `partition info` + write/read-back (RP2350) | `test_partition_device.py` | **yes** |
-| `bdev` via a partition-table block device (RP2350) | `test_bdev.py` | **yes** |
+| `bdev` via a partition-table block device (RP2350) | `test_bdev_partition.py` | **yes** |
 | `bdev` via a *binary-info* block device (RP2040 + RP2350) | `test_bdev_binfo.py` | **yes** |
 | `bdev` against MicroPython / CircuitPython drives (RP2040 + RP2350) | `test_bdev_firmware.py` | **yes** |
 | `otp` dump / get / set / load (RP2350) | `test_otp_device.py` | **yes, gated** |
@@ -101,8 +101,8 @@ to skip the clone and reuse your existing tree:
 PICO_SDK_PATH=/path/to/pico-sdk PICO_EXAMPLES_PATH=/path/to/pico-examples ./build_binaries.sh
 ```
 
-It builds a curated set of programs (`blink`, `hello_usb`, `hello_serial`,
-`hello_reset`, `hello_anything`, `blink_any`, plus `hello_otp` on RP2350) as
+It builds a curated set of programs (`blink`, `hello_usb`,
+`hello_anything`, plus `hello_encrypted` on RP2350) as
 `.elf` / `.uf2` / `.bin` for both boards, into `binaries/<chip>/`. It also builds
 helper firmwares into `binaries/<chip>/tools/`:
 
@@ -260,34 +260,12 @@ assume a fresh/reset image. #330 is still open (marked `xfail`) and is opt-in vi
 `PICOTOOL_TEST_OTP_RBIT_FIELD` so it never targets a security-critical field by
 accident.
 
-## An `info` bug this suite caught (now fixed)
-
-While building this suite an earlier develop build (~picotool 2.2.1-develop)
-was found to mishandle `picotool info` when two RP-series devices are attached
-(the normal state of this rig) and one is in BOOTSEL:
-
-1. **`info -a` (unfiltered) crashed** in `info_command::execute` (SIGSEGV), or
-   exited silently with no output.
-2. **targeted `info` on an RP2040 in BOOTSEL printed nothing**, even though the
-   same device served `save` / `load` / `verify` correctly.
-
-This is fixed on current master (2.3.0) and develop (2.3.1-develop) — see "fix
-`picotool info` for non-partition-capable devices" (#338). `test_info_device.py`
-keeps the regression tests so it stays fixed. Data-path commands were never
-affected.
-
-As a belt-and-braces measure the harness still avoids running `info -a` while a
-device is in BOOTSEL (`ensure_no_bootsel()` first).
-
 ## How the harness handles the hardware
 
 * Boards are identified by *chip*, never by a cached USB address (addresses
   change on every re-enumeration). `lsusb` provides bus/address/product-id;
   BOOTSEL devices are recognised purely by product id (`0x0003` = RP2040,
   `0x000f` = RP2350).
-* To avoid the `info -a` crash, the harness never runs `info -a` while any
-  device is in BOOTSEL — it reboots stray BOOTSEL devices back to application
-  mode first.
 * Each hardware test enters BOOTSEL (`reboot -u -f`, or an OpenOCD-flashed
   `enter_bootsel` as a fallback), drives picotool with an explicit
   `--bus/--address` selector, and the `board` fixture restores a USB-visible

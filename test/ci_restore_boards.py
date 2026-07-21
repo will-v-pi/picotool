@@ -5,11 +5,7 @@ lib.* relative to cwd).
 
 Used by .github/workflows/hardware-tests.yml as an `if: always()` step, so a
 test that left a board on a partition table, BOOTSEL, or other non-default
-state doesn't affect the next run. Leaving a board in BOOTSEL is the state
-that matters most: the self-hosted runner is unreliable if a board is still
-in BOOTSEL when it gets reset for the next run, so this retries hard and
-fails loudly (nonzero exit) if a board can't be gotten out of it, rather than
-silently reporting success.
+state doesn't affect the next run.
 """
 import sys
 import time
@@ -51,8 +47,7 @@ def main():
     for chip in chips:
         if not restore_chip(dm, chip):
             print(
-                f"ERROR: {chip} is still in BOOTSEL after {RETRIES} attempts - "
-                "needs manual attention before the runner is reset"
+                f"ERROR: {chip} is still in BOOTSEL after {RETRIES} attempts"
             )
             all_ok = False
     sys.exit(0 if all_ok else 1)

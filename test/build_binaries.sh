@@ -1,25 +1,20 @@
 #!/usr/bin/env bash
 #
 # build_binaries.sh - build the curated set of firmware binaries that the
-# picotool test suite feeds to picotool.
+# picotool test suite uses.
 #
 # Binaries are built from the *develop* branches of pico-sdk and pico-examples
-# (plus a couple of pico-sdk in-tree test programs) for both RP2040 (board
-# "pico") and RP2350 (board "pico2"). Each program is emitted as .elf, .uf2 and
-# .bin so the suite can exercise every input type picotool accepts.
+# (plus a couple of test programs) for both RP2040 (board
+# "pico") and RP2350 (board "pico2").
 #
 # Outputs are collected under test/binaries/<chip>/ where <chip> is rp2040 or
 # rp2350, e.g.
 #     test/binaries/rp2040/blink.elf
-#     test/binaries/rp2350/hello_otp.uf2
+#     test/binaries/rp2350/hello_encrypted.uf2
 #
 # A small recovery helper (enter_bootsel) is also built per chip into
 # test/binaries/<chip>/tools/ - the harness can flash it over SWD to force a
 # board into BOOTSEL.
-#
-# This script is self-contained: if PICO_SDK_PATH / PICO_EXAMPLES_PATH aren't
-# given (and no existing checkout is found at the default location), it clones
-# them itself - no sibling checkout or particular directory layout is assumed.
 #
 # Environment overrides:
 #   PICO_SDK_PATH             an existing pico-sdk checkout to build against,
@@ -32,11 +27,9 @@
 #   PICOTOOL_TEST_DEPS_DIR    where cloned dependencies are placed,
 #                             default: test/_deps
 #   PICOTOOL_TEST_BUILD_ROOT  scratch build tree, default: test/_work
-#   PICOTOOL_TEST_JOBS        parallel build jobs, default: nproc
-#   PICOTOOL_INSTALL_DIR      an already-installed picotool (built and
-#                             installed with -D PICOTOOL_FLAT_INSTALL=1 - see
+#   PICOTOOL_INSTALL_DIR      an already-installed picotool (see
 #                             BUILDING.md's "Custom Path Installation"), reused
-#                             instead of letting each pico-sdk build below
+#                             instead of letting each build directory
 #                             fetch and build its own copy from git. Default:
 #                             ../install. Ignored if it doesn't look like a
 #                             flat picotool install.
@@ -57,7 +50,6 @@ PICO_SDK_PATH="${PICO_SDK_PATH:-$DEPS_DIR/pico-sdk}"
 PICO_EXAMPLES_PATH="${PICO_EXAMPLES_PATH:-$DEPS_DIR/pico-examples}"
 BUILD_ROOT="${PICOTOOL_TEST_BUILD_ROOT:-$HERE/_work}"
 OUT_ROOT="$HERE/binaries"
-JOBS="${PICOTOOL_TEST_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 PICOTOOL_INSTALL_DIR="${PICOTOOL_INSTALL_DIR:-$REPO_ROOT/install}"
 
 echo "picotool test binary builder"
@@ -65,7 +57,6 @@ echo "  PICO_SDK_PATH        = $PICO_SDK_PATH"
 echo "  PICO_EXAMPLES_PATH   = $PICO_EXAMPLES_PATH"
 echo "  BUILD_ROOT           = $BUILD_ROOT"
 echo "  OUT_ROOT             = $OUT_ROOT"
-echo "  JOBS                 = $JOBS"
 echo "  PICOTOOL_INSTALL_DIR = $PICOTOOL_INSTALL_DIR"
 echo
 
@@ -115,16 +106,16 @@ ensure_shared_picotool() {
 ensure_shared_picotool
 
 # tinyusb is a submodule required for pico_stdio_usb, which hello_usb,
-# hello_serial, hello_reset and hello_anything all depend on.
+# and hello_anything all depend on.
 if [ -e "$PICO_SDK_PATH/.git" ] && [ ! -f "$PICO_SDK_PATH/lib/tinyusb/src/tusb.c" ]; then
     echo "== fetching tinyusb submodule (required for USB stdio examples) =="
     ( cd "$PICO_SDK_PATH" && git submodule update --init --depth 1 lib/tinyusb )
 fi
 
 # pico-examples executable targets built for every board.
-COMMON_TARGETS=(blink hello_usb hello_serial hello_reset hello_anything blink_any)
+COMMON_TARGETS=(blink hello_usb hello_anything)
 # Extra targets only meaningful on RP2350.
-declare -A EXTRA_TARGETS=( [pico2]="hello_otp" )
+declare -A EXTRA_TARGETS=( [pico2]="hello_encrypted" )
 
 # copy_outputs <build-dir> <target-name> <out-dir>
 # Copies <target>.{elf,uf2,bin} to <out-dir> if they exist.
@@ -138,7 +129,7 @@ copy_outputs() {
                 -name "$target.elf" -o -name "$target.uf2" -o -name "$target.bin" \
              \) -print0)
     if [ "$found" -eq 0 ]; then
-        echo "  WARNING: no outputs found for target '$target'" >&2
+        echo "::warning :: no outputs found for target '$target'" >&2
     fi
 }
 
@@ -165,7 +156,7 @@ build_board() {
     fi
 
     echo "=== $board ($chip): building ${targets[*]} ==="
-    cmake --build "$bdir" -j "$JOBS" --target "${targets[@]}"
+    cmake --build "$bdir" --target "${targets[@]}"
 
     echo "=== $board ($chip): collecting outputs ==="
     for t in "${targets[@]}"; do
@@ -197,7 +188,7 @@ build_tool() {
             -D PICO_BOARD="$board" \
             -D CMAKE_BUILD_TYPE=Release
     fi
-    cmake --build "$bdir" -j "$JOBS"
+    cmake --build "$bdir"
     copy_outputs "$bdir" "$name" "$out"
     # enter_bootsel also produces a RAM-only variant used for non-destructive
     # BOOTSEL entry over SWD (see lib/devices.py openocd_ram_bootsel).
