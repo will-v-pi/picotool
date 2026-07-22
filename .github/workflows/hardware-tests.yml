@@ -157,26 +157,28 @@ jobs:
           ./test-venv/bin/pip install --upgrade pip
           ./test-venv/bin/pip install -r requirements.txt
 
-      - name: Wait for boards to enumerate
-        # The FPGA in particular can take a while to come up and enumerate over
-        # USB after the runner starts (the wired pico/pico2 rig is normally up
-        # already). Wait until at least two Raspberry Pi (VID 2e8a) USB devices
-        # are present - the board/FPGA plus its debug probe - so the run below
-        # doesn't fail on a board that simply hadn't appeared yet.
-        timeout-minutes: 3
+      - name: Wait for the FPGA to enumerate
+        # FPGA variant only: the debug probe enumerates quickly, but the FPGA
+        # itself takes longer to come up over USB after the runner starts. Wait
+        # for the probe (at least one Raspberry Pi VID 2e8a device) to appear,
+        # then give the FPGA a fixed moment to enumerate too. The wired
+        # pico/pico2 rig doesn't need this (it's always up), so skip it there.
+        if: ${{ matrix.run_otp_fpga }}
+        timeout-minutes: 2
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 30); do
             n=$(lsusb -d 2e8a: | wc -l)
             echo "attempt $i: $n Raspberry Pi USB device(s) present"
-            if [ "$n" -ge 2 ]; then
-              lsusb -d 2e8a:
-              exit 0
-            fi
+            [ "$n" -ge 1 ] && break
             sleep 2
           done
-          echo "::error :: fewer than 2 Raspberry Pi (VID 2e8a) USB devices after waiting"
-          lsusb -d 2e8a: || true
-          exit 1
+          if [ "$(lsusb -d 2e8a: | wc -l)" -lt 1 ]; then
+            echo "::error :: no Raspberry Pi (VID 2e8a) USB device (debug probe) found"
+            exit 1
+          fi
+          echo "debug probe present; waiting 10s for the FPGA to enumerate"
+          sleep 10
+          lsusb -d 2e8a:
 
       - name: Run hardware test suite
         working-directory: test
