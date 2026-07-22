@@ -81,9 +81,11 @@ jobs:
           # so neither path works here. Drop a permissive, vendor-wide rule
           # (covers app + BOOTSEL PIDs, which change on reboot, and the
           # CMSIS-DAP probe) that doesn't depend on seat or group membership.
-          # Fine for a dedicated, physically-secured test runner.
-          echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="2e8a", MODE:="0666"' \
-            | sudo tee /etc/udev/rules.d/99-picotool-ci.rules
+          # Fine for a dedicated, physically-secured test runner. The 0xcafe
+          # rule covers dev_multi_cdc's custom vid so test_selectors.py can
+          # drive it by --vid/--pid; without it that device is root-only.
+          echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="2e8a", MODE:="0666"' | sudo tee /etc/udev/rules.d/99-picotool-ci.rules
+          echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="cafe", MODE:="0666"' | sudo tee -a /etc/udev/rules.d/99-picotool-ci.rules
           sudo udevadm control --reload
           sudo udevadm trigger
 

@@ -417,49 +417,50 @@ class DeviceManager:
         return self._openocd(board, [program_cmd], timeout)
 
     @contextlib.contextmanager
-    def hold_in_reset(self, board: "Board"):
-        """Hold `board`'s core halted over SWD for the duration of the block.
+    def usb_disconnected(self, board: "Board"):
+        """Drop `board` off the USB bus for the duration of the block.
 
-        Used to take the *other* board out of the running/BOOTSEL state so a
-        picotool command run with no --bus/--address selector has exactly one
-        candidate. `reset halt` resets the chip (so it leaves BOOTSEL) and
-        catches it in the bootrom, and the OpenOCD session is kept attached so
-        the core stays halted - it's therefore no longer a BOOTSEL device
-        competing for selection. On exit the core is resumed (`reset run`) so
-        the board runs its flash app again. Requires OpenOCD.
-
-        Note: a halted board still shows on lsusb (its USB pull-up isn't
-        dropped by an SWD core reset), but picotool won't pick it when another
-        device is in BOOTSEL - which is the case these tests set up.
+        Runs the RAM-only `usb_disconnect` helper over SWD (it resets the USB
+        controller, releasing the pull-up), so the board genuinely disappears
+        from lsusb rather than just being halted - unlike an SWD core reset,
+        which leaves the pull-up asserted. Used to remove the *other* board as
+        a candidate so a picotool command run with no --bus/--address selector
+        targets the single remaining device. On exit the board is rebooted back
+        into its flashed app (the helper never touched flash). Requires OpenOCD
+        and the usb_disconnect helper (run build_binaries.sh).
         """
         if not self.use_openocd:
-            raise DeviceError("hold_in_reset needs OpenOCD")
-        cmd = self._openocd_base(board) + ["-c", "init", "-c", "reset halt"]
-        # DEVNULL (not a PIPE): this process is kept alive for the whole block,
-        # and a PIPE that filled up would deadlock it.
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        # Give OpenOCD time to connect and issue `reset halt`; if it exits during
-        # this window the connect failed, so surface that rather than proceeding
-        # with an un-held board.
-        for _ in range(6):
-            if proc.poll() is not None:
-                raise DeviceError(
-                    f"could not hold {board.chip} in reset "
-                    f"(openocd exited {proc.returncode})"
-                )
-            time.sleep(0.5)
+            raise DeviceError("usb_disconnected needs OpenOCD")
+        elf = self.binaries[board.chip].tool("usb_disconnect", "elf")
+        if not elf:
+            raise DeviceError(
+                f"no usb_disconnect.elf for {board.chip} - run build_binaries.sh"
+            )
+        # Load + run it from SRAM (Thumb bit cleared on the entry point), same
+        # sequence as openocd_ram_bootsel.
+        entry = _elf_entry(elf) & ~1
+        self._openocd(
+            board,
+            ["init", "reset halt", f"load_image {elf}", f"resume {entry:#x}", "exit"],
+        )
+        # Confirm it actually left the bus before proceeding, so a no-selector
+        # command can't accidentally still see two devices.
+        if not self._wait(
+            lambda: not self.app_visible(board.chip)
+            and self.find_bootsel(board.chip) is None,
+            self.reboot_timeout,
+        ):
+            with contextlib.suppress(DeviceError):
+                self._openocd(board, ["init", "reset run", "exit"], timeout=30)
+            raise DeviceError(f"{board.chip} did not drop off USB")
         try:
             yield
         finally:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            # Resume the core so the board runs its flash app and re-enumerates.
+            # Reboot into the flashed app and let it come back on USB.
             with contextlib.suppress(DeviceError):
                 self._openocd(board, ["init", "reset run", "exit"], timeout=30)
+            with contextlib.suppress(DeviceError):
+                self.ensure_app(board)
 
     def openocd_enter_bootsel(self, board: "Board"):
         """Enter BOOTSEL by flashing enter_bootsel (overwrites flash)."""

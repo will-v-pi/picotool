@@ -113,7 +113,9 @@ if [ -e "$PICO_SDK_PATH/.git" ] && [ ! -f "$PICO_SDK_PATH/lib/tinyusb/src/tusb.c
 fi
 
 # pico-examples executable targets built for every board.
-COMMON_TARGETS=(blink hello_usb hello_anything)
+# dev_multi_cdc advertises a custom USB vid/pid (0xcafe/0x4102) plus the RPI
+# reset interface - used by test_selectors.py to exercise --vid/--pid selection.
+COMMON_TARGETS=(blink hello_usb hello_anything dev_multi_cdc)
 # Extra targets only meaningful on RP2350.
 declare -A EXTRA_TARGETS=( [pico2]="hello_encrypted" )
 
@@ -165,6 +167,7 @@ build_board() {
 
     build_tool "$board" "$chip" enter_bootsel
     build_tool "$board" "$chip" bi_bdev
+    build_tool "$board" "$chip" usb_disconnect
 
     echo "=== $board ($chip): done -> $out ==="
     ls -1 "$out"

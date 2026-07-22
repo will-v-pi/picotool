@@ -1,12 +1,13 @@
 """picotool commands driven with NO --bus/--address selector.
 
 With two boards on the rig, picotool needs a single candidate device when it's
-given no selector. Each test here puts the target chip into BOOTSEL and holds
-every *other* connected board halted over SWD (device_manager.hold_in_reset) so
-it leaves BOOTSEL and stops being a competing target, then exercises picotool
+given no selector. Each test here puts the target chip into BOOTSEL and drops
+every *other* connected board off the USB bus (device_manager.usb_disconnected,
+which runs the RAM usb_disconnect helper over SWD), then exercises picotool
 without a selector - checking it auto-targets the one remaining board.
 
-The hold is done through the debug probe, so these skip under --no-openocd.
+The disconnect is done through the debug probe, so these skip under
+--no-openocd.
 """
 import contextlib
 
@@ -20,14 +21,14 @@ pytestmark = [pytest.mark.hardware, pytest.mark.slow]
 @pytest.fixture
 def solo(board, device_manager, connected_chips):
     """`board` in BOOTSEL as the sole candidate: every other connected board is
-    held halted (out of BOOTSEL) for the duration of the test, then resumed."""
+    dropped off USB for the duration of the test, then brought back."""
     dm = device_manager
     if not dm.use_openocd:
-        pytest.skip("no-selector isolation needs OpenOCD to hold the other board")
+        pytest.skip("no-selector isolation needs OpenOCD to disconnect the other board")
     others = [c for c in connected_chips if c != board.chip]
     with contextlib.ExitStack() as stack:
         for chip in others:
-            stack.enter_context(dm.hold_in_reset(Board(chip, dm)))
+            stack.enter_context(dm.usb_disconnected(Board(chip, dm)))
         dm.ensure_bootsel(board)
         yield board
 
