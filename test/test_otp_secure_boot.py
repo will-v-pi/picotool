@@ -35,8 +35,11 @@ There are two distinct risk tiers here, gated separately:
    board can be returned to an ordinary unsigned app. This class deliberately
    does NOT use the shared board/rp2350_board fixtures, because their teardown
    reflashes a plain unsigned app - which would never come up again here. It
-   manages its own device handle and its own recovery (reloading the last
-   signed-good image) instead of relying on the shared machinery.
+   manages its own device handle instead of relying on the shared machinery,
+   and on the way out disables the BOOTSEL USB mass-storage interface
+   (BOOT_FLAGS0.DISABLE_BOOTSEL_USB_MSD_IFC, one-way) and leaves the chip in
+   BOOTSEL - the auto-mounting MSD drive would otherwise wedge the CI runner's
+   reset.
 
 TestSecureBootEnforcement has been run successfully end-to-end against a real
 RP2350 FPGA (2026-07-20): first boot of a rollback-versioned signed image
@@ -271,7 +274,15 @@ class TestSecureBootEnforcement:
                 "run - rollback protection did not reject it"
             )
         finally:
-            # Best-effort: leave the board on the last known-good SIGNED image.
-            # There is no "restore to unsigned" after this test - see the
-            # module docstring.
-            boots(signed_v3)
+            # Leave the FPGA safe for the CI runner (best-effort, so it never
+            # masks a failure above): disable the BOOTSEL USB mass-storage
+            # interface - one-way, BOOT_FLAGS0 bit 17 - and reboot into BOOTSEL.
+            # The device is left in BOOTSEL for the next run, and the
+            # auto-mounting MSD drive can otherwise wedge the runner's reset;
+            # PICOBOOT (which picotool talks to) is unaffected, so this doesn't
+            # lock us out. There is no "restore to unsigned" after this test.
+            try:
+                otp_cmd("otp", "set", "BOOT_FLAGS0.DISABLE_BOOTSEL_USB_MSD_IFC", "1")
+                otp_cmd("reboot", "-u", "-f")
+            except Exception as e:  # pragma: no cover - best-effort cleanup
+                print(f"warning: could not disable BOOTSEL MSD interface: {e}")
