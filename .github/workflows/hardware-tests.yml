@@ -46,9 +46,9 @@ jobs:
       - id: select
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.run_otp_fpga }}" == "true" ]]; then
-            SUITE='{"suite":"rp2350-otp-fpga","run_otp_fpga":true,"runner_tags":["self-hosted","linux","arm64","trixie","fpga"],"pytest_args":"--boards rp2350 --run-otp","restore_boards_args":"rp2350"}'
+            SUITE='{"suite":"rp2350-otp-fpga","run_otp_fpga":true,"runner_tags":["self-hosted","linux","arm64","trixie","fpga"],"pytest_args":"--boards rp2350 --run-otp","restore_boards_args":"rp2350","run_timeout":60}'
           else
-            SUITE='{"suite":"rp2040-rp2350","run_otp_fpga":false,"runner_tags":["self-hosted","linux","arm64","trixie","pico","pico2"],"pytest_args":"--boards rp2040,rp2350","restore_boards_args":"rp2040 rp2350"}'
+            SUITE='{"suite":"rp2040-rp2350","run_otp_fpga":false,"runner_tags":["self-hosted","linux","arm64","trixie","pico","pico2"],"pytest_args":"--boards rp2040,rp2350","restore_boards_args":"rp2040 rp2350","run_timeout":30}'
           fi
           echo "matrix={\"include\":[$SUITE]}" >> "$GITHUB_OUTPUT"
 
@@ -184,8 +184,10 @@ jobs:
 
       - name: Run hardware test suite
         working-directory: test
-        # ~15 min in practice; bounded since there's no job-level timeout.
-        timeout-minutes: 30
+        # Per-variant: the normal rp2040+rp2350 suite is ~15 min, but the FPGA
+        # OTP/secure-boot suite is much slower (crypto verification is ~2-3 min
+        # per signed boot), so it gets a larger budget (see select-suite).
+        timeout-minutes: ${{ matrix.run_timeout }}
         env:
           # Passed via env rather than --picotool: a CLI option whose value
           # resolves to a real path outside test/ confuses pytest's rootdir/

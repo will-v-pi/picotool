@@ -613,8 +613,20 @@ class BootselSession:
         bootable image, so the board comes back to BOOTSEL on its own; if it
         boots an application instead, it is forced back into BOOTSEL.
         """
-        chip = self.board.chip
         self.pt.run("reboot", *self.selector(), timeout=self.manager.reboot_timeout)
+        self.wait_for_reboot()
+
+    def wait_for_reboot(self):
+        """Wait out a reboot that has just been triggered on the device.
+
+        Waits for the full disconnect/reconnect cycle back to BOOTSEL (the
+        device re-enumerates at a possibly-new address), then lets the bootrom
+        finish initialising. Use after any command that reboots the device -
+        `reboot`, or `otp permissions`, which loads a helper into XIP RAM and
+        reboots to run it. Assumes flash holds no bootable image so the board
+        returns to BOOTSEL on its own; forces it back if it booted an app.
+        """
+        chip = self.board.chip
         # Wait for a full disconnect/reconnect cycle so we talk to the fresh
         # BOOTSEL instance, not the one that is still tearing down.
         self.manager._wait(

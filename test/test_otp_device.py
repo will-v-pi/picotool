@@ -37,11 +37,20 @@ HIGH_LOCK_ROW = os.environ.get("PICOTOOL_TEST_OTP_HIGH_LOCK_ROW", "OTP_DATA_PAGE
 
 
 def _otp_raw(session, selector):
-    """Read a single OTP row's raw value via `otp get --raw`."""
+    """Read a single OTP row's raw value via `otp get --raw <selector>`.
+
+    Scope the parse to the requested row: picotool echoes it as
+    `ROW 0x..: OTP_DATA_<NAME>` then `VALUE 0x..`, but the output can carry
+    extra rows first - the appended --bus/--address selector's numbers are
+    themselves echoed as (bogus) rows - so a naive "first VALUE" match reads one
+    of those (e.g. 0) instead of the row we asked for.
+    """
     r = session.ok("otp", "get", "--raw", selector)
-    m = re.search(r"VALUE\s+0x([0-9a-fA-F]+)", r.out)
-    if not m:
-        m = re.search(r"RAW_VALUE=0x([0-9a-fA-F]+)", r.out)
+    m = re.search(
+        rf"{re.escape(selector)}\b.*?(?:VALUE\s+|RAW_VALUE=)0x([0-9a-fA-F]+)",
+        r.out,
+        re.DOTALL,
+    )
     assert m, f"could not parse OTP value for {selector} from:\n{r.out}"
     return int(m.group(1), 16)
 
@@ -117,6 +126,10 @@ class TestOtpIssueRegressions:
         pf.write_text(json.dumps(perms))
         with rp2350_board.bootsel() as dev:
             dev.ok("otp", "permissions", str(pf))
+            # `otp permissions` loads a helper into XIP RAM and reboots the
+            # device to run it; it drops off USB and comes back in BOOTSEL at a
+            # new address. Wait for that cycle before reading the locks back.
+            dev.wait_for_reboot()
             a = (_otp_raw(dev, f"PAGE{p_a}_LOCK0"), _otp_raw(dev, f"PAGE{p_a}_LOCK1"))
             b = (_otp_raw(dev, f"PAGE{p_b}_LOCK0"), _otp_raw(dev, f"PAGE{p_b}_LOCK1"))
             c = (_otp_raw(dev, f"PAGE{p_c}_LOCK0"), _otp_raw(dev, f"PAGE{p_c}_LOCK1"))
