@@ -123,6 +123,7 @@ class TestProvisionBootKey:
             assert re.search(r"SECURE_BOOT_ENABLE\b.*=\s*0\b", enable.out, re.DOTALL), enable
 
 
+@pytest.mark.secure_boot  # forces this to run last (see conftest) - it's one-way
 @pytest.mark.skipif(
     not ENABLE_SECURE_BOOT,
     reason="sets CRIT1.SECURE_BOOT_ENABLE, a permanent whole-chip change that "

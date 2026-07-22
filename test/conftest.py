@@ -75,6 +75,7 @@ def pytest_configure(config):
         ("rp2350", "test applies to RP2350"),
         ("otp", "test touches OTP; device variants need --run-otp (FPGA only)"),
         ("slow", "slow test (reflashes / long transfers)"),
+        ("secure_boot", "permanently enables secure boot (one-way); forced last"),
     ]:
         config.addinivalue_line("markers", f"{name}: {desc}")
 
@@ -97,6 +98,11 @@ def pytest_collection_modifyitems(config, items):
         ):
             if not run_otp:
                 item.add_marker(skip_otp)
+
+    # Force secure-boot tests to run last: once SECURE_BOOT_ENABLE is burned the
+    # chip only boots signed images, so any test using an unsigned binary must
+    # already have run. Stable sort keeps every other test's relative order.
+    items.sort(key=lambda item: 1 if item.get_closest_marker("secure_boot") else 0)
 
 
 # --------------------------------------------------------------------------

@@ -211,13 +211,30 @@ jobs:
             --require-boards
 
       - name: Restore boards to a known-good app
-        # Always runs, even on failure/timeout above, so a test that left a
-        # board on a partition table or in BOOTSEL doesn't affect the next
-        # run. Deliberately NOT continue-on-error: this runner misbehaves on
-        # its next reset if a board is left in BOOTSEL, so a board that's
-        # still stuck after ci_restore_boards.py's own retries should fail
-        # the job loudly rather than pass silently.
-        if: always()
+        # Wired rig only. Always runs, even on failure/timeout above, so a test
+        # that left a board on a partition table or in BOOTSEL doesn't affect
+        # the next run. Deliberately NOT continue-on-error: this runner
+        # misbehaves on its next reset if a board is left in BOOTSEL, so a board
+        # still stuck after ci_restore_boards.py's own retries should fail the
+        # job loudly rather than pass silently.
+        # Skipped for the FPGA variant - see "Leave the FPGA in BOOTSEL" below.
+        if: ${{ always() && !matrix.run_otp_fpga }}
         working-directory: test
         timeout-minutes: 5
         run: ./test-venv/bin/python ci_restore_boards.py ${{ github.workspace }}/install/picotool/picotool ${{ matrix.restore_boards_args }}
+
+      - name: Leave the FPGA in BOOTSEL
+        # FPGA/secure-boot variant: the secure-boot test permanently enables
+        # secure boot, after which the chip only boots *signed* images - so
+        # ci_restore_boards would fail trying to load an unsigned app. Just
+        # leave the FPGA in BOOTSEL (the next run resets its OTP image anyway).
+        if: ${{ always() && matrix.run_otp_fpga }}
+        timeout-minutes: 2
+        run: |
+          PT="${{ github.workspace }}/install/picotool/picotool"
+          if lsusb -d 2e8a:000f >/dev/null 2>&1; then
+            echo "FPGA already in BOOTSEL"
+          else
+            echo "rebooting FPGA into BOOTSEL"
+            "$PT" reboot -u -f || echo "::warning :: could not reboot the FPGA into BOOTSEL"
+          fi
