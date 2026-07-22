@@ -15,7 +15,14 @@ stays in place.
 """
 import pytest
 
+from lib.devices import Board
+
 pytestmark = pytest.mark.hardware
+
+
+def _both_or_skip(connected_chips):
+    if not all(c in connected_chips for c in ("rp2040", "rp2350")):
+        pytest.skip("needs both rp2040 and rp2350 connected")
 
 
 def test_info_reports_program(board, fw):
@@ -49,3 +56,33 @@ def test_info_a_unfiltered_with_bootsel(board, device_manager):
         r = device_manager.pt.run("info", "-a", timeout=20)
         assert r.ok, r
         assert not r.timed_out
+
+
+@pytest.fixture
+def both_in_bootsel(device_manager, connected_chips):
+    """Both boards held in BOOTSEL at once, restored to an app afterwards."""
+    _both_or_skip(connected_chips)
+    dm = device_manager
+    for chip in ("rp2040", "rp2350"):
+        dm.ensure_bootsel(Board(chip, dm))
+    try:
+        yield dm
+    finally:
+        for chip in ("rp2040", "rp2350"):
+            dm.ensure_app(Board(chip, dm), reflash=True)
+
+
+def test_info_all_lists_both_bootsel(both_in_bootsel):
+    """`info -a` with no selector lists BOTH boards when both are in BOOTSEL."""
+    r = both_in_bootsel.pt.run("info", "-a", timeout=30)
+    assert r.ok, r
+    assert "Multiple RP-series devices in BOOTSEL" in r.out, r
+    assert "RP2040" in r.out and "RP2350" in r.out, r
+
+
+def test_info_plain_lists_both_bootsel(both_in_bootsel):
+    """Plain `info` (no -a, no selector) likewise reports both BOOTSEL devices
+    rather than erroring or silently picking one."""
+    r = both_in_bootsel.pt.run("info", timeout=30)
+    assert r.ok, r
+    assert "RP2040" in r.out and "RP2350" in r.out, r
