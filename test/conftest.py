@@ -56,6 +56,11 @@ def pytest_addoption(parser):
         "- only enable this against an FPGA, never a real chip.",
     )
     g.addoption(
+        "--only-otp",
+        action="store_true",
+        help="only run OTP tests, and skip all others (must pass --run-otp too)"
+    )
+    g.addoption(
         "--require-boards",
         action="store_true",
         help="fail the whole run immediately if any selected board (--boards) "
@@ -85,6 +90,10 @@ def pytest_collection_modifyitems(config, items):
     skip_otp = pytest.mark.skip(
         reason="OTP device test skipped; pass --run-otp (FPGA only) to enable"
     )
+    only_otp = config.getoption("--only-otp")
+    skip_non_otp = pytest.mark.skip(
+        reason="--only-otp passed, so skipping all other tests"
+    )
     for item in items:
         # Skip OTP *device* tests unless explicitly enabled. OTP tests that only
         # touch files (test_otp_list.py) don't depend on any device fixture and
@@ -98,6 +107,10 @@ def pytest_collection_modifyitems(config, items):
         ):
             if not run_otp:
                 item.add_marker(skip_otp)
+        
+        if only_otp:
+            if not "otp" in item.keywords:
+                item.add_marker(skip_non_otp)
 
     # Force secure-boot tests to run last: once SECURE_BOOT_ENABLE is burned the
     # chip only boots signed images, so any test using an unsigned binary must
