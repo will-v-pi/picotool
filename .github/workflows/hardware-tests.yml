@@ -46,9 +46,9 @@ jobs:
       - id: select
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.run_otp_fpga }}" == "true" ]]; then
-            SUITE='{"suite":"rp2350-otp-fpga","run_otp_fpga":true,"runner_tags":["self-hosted","linux","arm64","trixie","fpga"],"pytest_args":"--boards rp2350 --run-otp --only-otp","restore_boards_args":"rp2350","run_timeout":60}'
+            SUITE='{"suite":"rp2350-otp-fpga","run_otp_fpga":true,"runner_tags":["self-hosted","linux","arm64","fpga"],"pytest_args":"--boards rp2350 --run-otp --only-otp","restore_boards_args":"rp2350","run_timeout":60}'
           else
-            SUITE='{"suite":"rp2040-rp2350","run_otp_fpga":false,"runner_tags":["self-hosted","linux","arm64","trixie","pico","pico2"],"pytest_args":"--boards rp2040,rp2350","restore_boards_args":"rp2040 rp2350","run_timeout":30}'
+            SUITE='{"suite":"rp2040-rp2350","run_otp_fpga":false,"runner_tags":["self-hosted","linux","arm64","pico","pico2"],"pytest_args":"--boards rp2040,rp2350","restore_boards_args":"rp2040 rp2350","run_timeout":30}'
           fi
           echo "matrix={\"include\":[$SUITE]}" >> "$GITHUB_OUTPUT"
 
