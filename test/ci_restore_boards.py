@@ -26,6 +26,7 @@ def restore_chip(dm: DeviceManager, chip: str) -> bool:
     Returns True once the board is confirmed not in BOOTSEL - the one
     property that matters for the runner - even if earlier attempts raised.
     """
+    global RETRIES
     if chip == "fpga":
         # Secure boot is enabled so it won't actually boot, so only try once
         # It will boot after the FPGA is reset
