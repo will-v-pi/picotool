@@ -101,7 +101,7 @@ to skip the clone and reuse your existing tree:
 PICO_SDK_PATH=/path/to/pico-sdk PICO_EXAMPLES_PATH=/path/to/pico-examples ./build_binaries.sh
 ```
 
-It builds a curated set of programs (`blink`, `hello_usb`,
+It builds a curated set of programs (`blink`, `hello_usb`, `hello_serial`,
 `hello_anything`, plus `hello_encrypted` on RP2350) as
 `.elf` / `.uf2` / `.bin` for both boards, into `binaries/<chip>/`. It also builds
 helper firmwares into `binaries/<chip>/tools/`:

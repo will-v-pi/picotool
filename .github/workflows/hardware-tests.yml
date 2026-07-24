@@ -46,7 +46,7 @@ jobs:
       - id: select
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.run_otp_fpga }}" == "true" ]]; then
-            SUITE='{"suite":"rp2350-otp-fpga","run_otp_fpga":true,"runner_tags":["self-hosted","linux","arm64","fpga"],"pytest_args":"--boards rp2350 --run-otp --only-otp","restore_boards_args":"rp2350","run_timeout":60}'
+            SUITE='{"suite":"rp2350-otp-fpga","run_otp_fpga":true,"runner_tags":["self-hosted","linux","arm64","fpga"],"pytest_args":"--boards rp2350 --run-otp --only-otp","restore_boards_args":"fpga","run_timeout":60}'
           else
             SUITE='{"suite":"rp2040-rp2350","run_otp_fpga":false,"runner_tags":["self-hosted","linux","arm64","pico","pico2"],"pytest_args":"--boards rp2040,rp2350","restore_boards_args":"rp2040 rp2350","run_timeout":30}'
           fi
@@ -212,24 +212,7 @@ jobs:
         # misbehaves on its next reset if a board is left in BOOTSEL, so a board
         # still stuck after ci_restore_boards.py's own retries should fail the
         # job loudly rather than pass silently.
-        # Skipped for the FPGA variant - see "Leave the FPGA in BOOTSEL" below.
-        if: ${{ always() && !matrix.run_otp_fpga }}
+        if: always()
         working-directory: test
         timeout-minutes: 5
         run: ./test-venv/bin/python ci_restore_boards.py ${{ github.workspace }}/install/picotool/picotool ${{ matrix.restore_boards_args }}
-
-      - name: Leave the FPGA in BOOTSEL
-        # FPGA/secure-boot variant: the secure-boot test permanently enables
-        # secure boot, after which the chip only boots *signed* images - so
-        # ci_restore_boards would fail trying to load an unsigned app. Just
-        # leave the FPGA in BOOTSEL (the next run resets its OTP image anyway).
-        if: ${{ always() && matrix.run_otp_fpga }}
-        timeout-minutes: 2
-        run: |
-          PT="${{ github.workspace }}/install/picotool/picotool"
-          if lsusb -d 2e8a:000f >/dev/null 2>&1; then
-            echo "FPGA already in BOOTSEL"
-          else
-            echo "rebooting FPGA into BOOTSEL"
-            "$PT" reboot -u -f || echo "::warning :: could not reboot the FPGA into BOOTSEL"
-          fi

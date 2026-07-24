@@ -72,5 +72,8 @@ class BinarySet:
     def hello_usb(self, ext: str = "elf") -> Path:
         return self.path(f"hello_usb.{ext}")
 
+    def hello_serial(self, ext: str = "elf") -> Path:
+        return self.path(f"hello_serial.{ext}")
+
     def hello_anything(self, ext: str = "elf") -> Path:
         return self.path(f"hello_anything.{ext}")

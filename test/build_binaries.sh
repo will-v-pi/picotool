@@ -115,7 +115,7 @@ fi
 # pico-examples executable targets built for every board.
 # dev_multi_cdc advertises a custom USB vid/pid (0xcafe/0x4102) plus the RPI
 # reset interface - used by test_selectors.py to exercise --vid/--pid selection.
-COMMON_TARGETS=(blink hello_usb hello_anything dev_multi_cdc)
+COMMON_TARGETS=(blink hello_usb hello_serial hello_anything dev_multi_cdc)
 # Extra targets only meaningful on RP2350.
 declare -A EXTRA_TARGETS=( [pico2]="hello_encrypted" )
 

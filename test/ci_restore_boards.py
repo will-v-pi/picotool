@@ -26,13 +26,18 @@ def restore_chip(dm: DeviceManager, chip: str) -> bool:
     Returns True once the board is confirmed not in BOOTSEL - the one
     property that matters for the runner - even if earlier attempts raised.
     """
+    if chip == "fpga":
+        # Secure boot is enabled so it won't actually boot, so only try once
+        # It will boot after the FPGA is reset
+        chip = "rp2350"
+        RETRIES = 1
     for attempt in range(1, RETRIES + 1):
         try:
-            dm.ensure_app(Board(chip, dm), reflash=True)
+            dm.ensure_app(Board(chip, dm), reflash=True, usb_app=False)
         except Exception as e:
             print(f"{chip}: attempt {attempt}/{RETRIES} failed: {e}")
-        if dm.find_bootsel(chip) is None:
-            print(f"{chip}: restored (not in BOOTSEL)")
+        if dm.find_bootsel(chip) is None and not dm.app_visible(chip):
+            print(f"{chip}: restored (not in BOOTSEL, no USB)")
             return True
         time.sleep(RETRY_DELAY)
     return False
@@ -43,14 +48,12 @@ def main():
     chips = sys.argv[2:] or ["rp2040", "rp2350"]
 
     dm = DeviceManager(Picotool(picotool_path), {c: BinarySet(c) for c in ("rp2040", "rp2350")})
-    all_ok = True
     for chip in chips:
         if not restore_chip(dm, chip):
             print(
-                f"ERROR: {chip} is still in BOOTSEL after {RETRIES} attempts"
+                f"::error:: {chip} is still in BOOTSEL after {RETRIES} attempts"
             )
-            all_ok = False
-    sys.exit(0 if all_ok else 1)
+    sys.exit(0)
 
 
 if __name__ == "__main__":

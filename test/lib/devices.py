@@ -300,19 +300,19 @@ class DeviceManager:
             )
         )
 
-    def ensure_app(self, board: "Board", reflash: bool = False):
+    def ensure_app(self, board: "Board", reflash: bool = False, usb_app: bool = True):
         """Leave `board` running a USB-visible, known-good application (hello_usb)."""
         dev = self.find_bootsel(board.chip)
         if dev is not None:
             # In BOOTSEL: load a USB app and reboot into it.
-            self.flash_app(board)
+            self.flash_app(board, usb_app)
             return
         if reflash or not self.app_visible(board.chip):
             # Running a non-USB / unknown image - get to BOOTSEL and restore.
             # (app_visible reads lsusb by PID, so it's reliable even when the
             # other board is in BOOTSEL - no cross-board guard needed.)
             self.ensure_bootsel(board)
-            self.flash_app(board)
+            self.flash_app(board, usb_app)
 
     # -- OpenOCD ---------------------------------------------------------
     def probe_serial(self, chip: str) -> str | None:
@@ -535,16 +535,18 @@ class DeviceManager:
             self.pt.run("reboot", *cur.selector, timeout=self.reboot_timeout)
         self._wait(lambda: not self.find_bootsel(chip), self.reboot_timeout)
 
-    def flash_app(self, board: "Board"):
+    def flash_app(self, board: "Board", usb_app: bool = True):
         """Restore a known-good USB application (hello_usb) onto `board`.
 
         Loads over USB when the board is in BOOTSEL. If the app fails to
         enumerate (e.g. a leftover partition table redirects the boot), the
         flash is erased and the app re-loaded. Falls back to the debug probe
         when the board is not in BOOTSEL.
+
+        Set usb_app=False to use a non-USB application
         """
         bset = self.binaries[board.chip]
-        uf2 = bset.get("hello_usb", "uf2") or bset.get("blink", "uf2")
+        uf2 = bset.get("hello_usb", "uf2") if usb_app else bset.get("hello_serial", "uf2")
         dev = self.find_bootsel(board.chip)
         if dev is not None and uf2:
             self._load_and_boot(board.chip, uf2)
@@ -558,7 +560,7 @@ class DeviceManager:
         # Not in BOOTSEL (or USB restore failed) - use the debug probe.
         if not self.use_openocd:
             raise DeviceError("cannot restore application: OpenOCD disabled")
-        elf = bset.get("hello_usb", "elf") or bset.get("blink", "elf")
+        elf = bset.get("hello_usb", "elf") if usb_app else bset.get("hello_serial", "elf")
         if not elf:
             raise DeviceError(f"no application binary for {board.chip}")
         self._run_openocd(board, f"program {elf} verify reset exit")
