@@ -50,7 +50,7 @@ jobs:
           submodules: 'true'
 
       - name: Install toolchain and tools
-        uses: raspberrypi/pico-sdk-tools/installer@main
+        uses: raspberrypi/pico-sdk-tools/installer@optional-version
         # No sdk-version, so it installs the tools for the newest SDK release
         with:
           only: arm-toolchain pico-sdk-tools cmake ninja
