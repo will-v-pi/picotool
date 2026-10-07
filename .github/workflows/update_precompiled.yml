@@ -1,0 +1,100 @@
+name: Update Precompiled Binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      sdk_branch:
+        description: 'Pico SDK branch to build against'
+        required: true
+        default: 'develop'
+      picotool_branch:
+        description: 'picotool branch to build, and to merge the updated binaries into'
+        required: true
+        default: 'develop'
+      commit_directly:
+        description: 'Commit directly to the picotool branch, instead of pushing a new branch to open a PR from (not possible for protected branches)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  update-precompiled:
+    runs-on: ubuntu-latest
+    env:
+      SDK_BRANCH: ${{ inputs.sdk_branch }}
+      PICOTOOL_BRANCH: ${{ inputs.picotool_branch }}
+      COMMIT_DIRECTLY: ${{ inputs.commit_directly }}
+    steps:
+      - name: Check target branch
+        run: |
+          if [ "$PICOTOOL_BRANCH" = "master" ]; then
+            echo "::error::Updating precompiled binaries on master is not allowed"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.picotool_branch }}
+
+      - name: Checkout Pico SDK
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: ${{ inputs.sdk_branch }}
+          path: pico-sdk
+          submodules: 'true'
+
+      - name: Install toolchain and tools
+        uses: raspberrypi/pico-sdk-tools/installer@main
+        # No sdk-version, so it installs the tools for the newest SDK release
+        with:
+          only: arm-toolchain pico-sdk-tools cmake ninja
+
+      - name: Install dependencies
+        run: sudo apt-get install -y libusb-1.0-0-dev
+
+      - name: Build precompiled binaries
+        run: |
+          cmake -S . -B build -G "Ninja" -D PICO_SDK_PATH="$GITHUB_WORKSPACE/pico-sdk" -D USE_PRECOMPILED=FALSE
+          # The install step of each embedded project copies its output back into the source tree
+          cmake --build build
+
+      - name: Commit updated binaries
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR_ID+$GITHUB_ACTOR@users.noreply.github.com"
+
+          # Only tracked files, as the pico-sdk checkout is inside the workspace
+          git add -u
+
+          sdk_sha=$(git -C pico-sdk rev-parse --short HEAD)
+          gcc_version=$(arm-none-eabi-gcc --version | head -n 1)
+          details="Built using pico-sdk $SDK_BRANCH ($sdk_sha) and $gcc_version"
+
+          if git diff --cached --quiet; then
+            echo "Pre-compiled binaries on \`$PICOTOOL_BRANCH\` are already up to date. $details." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git diff --cached --stat
+
+          git commit -m "Update pre-compiled binaries" -m "$details"
+
+          if [ "$COMMIT_DIRECTLY" = "true" ]; then
+            git push origin "HEAD:refs/heads/$PICOTOOL_BRANCH"
+            echo "Updated pre-compiled binaries committed to \`$PICOTOOL_BRANCH\`" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          pr_branch="update-precompiled/$PICOTOOL_BRANCH-$GITHUB_RUN_ID"
+          git push origin "HEAD:refs/heads/$pr_branch"
+
+          # The PR is left for the triggering user to open, so that they are its author
+          title="Update pre-compiled binaries ($PICOTOOL_BRANCH)"
+          body="$details."
+          uri_encode() { jq -rn --arg s "$1" '$s | @uri'; }
+          pr_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$PICOTOOL_BRANCH...$pr_branch?expand=1&title=$(uri_encode "$title")&body=$(uri_encode "$body")"
+          echo "Create the PR at $pr_url"
+          echo "Updated pre-compiled binaries pushed to \`$pr_branch\` - [create the PR]($pr_url)" >> "$GITHUB_STEP_SUMMARY"
