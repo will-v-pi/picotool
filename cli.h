@@ -21,6 +21,7 @@
 #include <limits>
 #include <cstdint>
 #include <iterator>
+#include <cctype>
 
 /**
  * Note this is a hastily hacked together command line parser.
@@ -137,6 +138,9 @@ namespace cli {
         // if we are an error for something mising; we should rather report on an up next
         // unsupported option than our error message
         bool prefer_unknown_option_message = false;
+        // if set, a set group which has matched something may return a match despite still missing
+        // required elements, as the containing set will re-enter it (and report the error) later
+        bool allow_partial = false;
         std::map<const matchable *, int> matchable_counts;
         settings_holder settings;
 
@@ -318,9 +322,16 @@ namespace cli {
         group operator+(const matchable_derived<T> &m);
     };
 
+    // does this argument look like an option (e.g. -f or --force)? Note -<digit> is not
+    // considered an option, as it may be a negative number
+    static bool looks_like_option(const string &x) {
+        return x.length() > 1 && x[0] == '-' && !isdigit((unsigned char)x[1]);
+    }
+
     template<typename D>
     struct value_base : public matchable_derived<D> {
-        std::function<bool(const string&)> exclusion_filter = [](const string &x){return false;};
+        // by default, don't swallow options as values, so that options may follow positional values
+        std::function<bool(const string&)> exclusion_filter = looks_like_option;
 
         explicit value_base(string name) : matchable_derived<D>(std::move(name)) {
             this->_min = 1;
@@ -795,9 +806,15 @@ namespace cli {
         }
 
         match_type match(match_state& ms) const override {
-            match_type rc = ms.check_min_max(this);
-            if (rc == match_type::no_match) return rc;
-            assert(rc == match_type::not_yet);
+            // sets and exclusive groups may be re-entered, so that their options can be interleaved
+            // with those of other groups in any order; their elements enforce their own limits
+            if (type == sequence) {
+                match_type rc = ms.check_min_max(this);
+                if (rc == match_type::no_match) return rc;
+                assert(rc == match_type::not_yet);
+            }
+            match_type rc;
+            bool allow_partial = ms.allow_partial;
             switch(type) {
                 case sequence:
                     rc = match_sequence(ms);
@@ -809,15 +826,22 @@ namespace cli {
                     rc = match_exclusive(ms);
                     break;
             }
+            ms.allow_partial = allow_partial;
             return ms.update_stats(rc, this);
         }
 
         match_type match_sequence(match_state& ms) const {
             match_type rc = match_type::no_match;
+            // a sequence is not re-entered, so its elements must match fully
+            ms.allow_partial = false;
             for(const auto& e : elements) {
                 rc = e->match(ms);
                 assert(rc != match_type::not_yet);
                 if (rc != match_type::match) {
+                    if (rc == match_type::error && e != elements.front()) {
+                        // e.g. --opt followed by another option rather than its value; we know what's missing
+                        ms.prefer_unknown_option_message = false;
+                    }
                     break;
                 }
             }
@@ -829,6 +853,7 @@ namespace cli {
 //            vector<match_type> types(elements.size(), match_type::not_yet);
             bool had_any_matches = false;
             bool final_pass = false;
+            bool allow_partial = ms.allow_partial;
             do {
                 bool matches_this_time = false;
                 bool errors_this_time = false;
@@ -836,9 +861,23 @@ namespace cli {
                 for (size_t i=0;i<elements.size();i++) {
 //                    if (types[i] == match_type::not_yet) {
                         auto ms_prime = ms;
+                        // we will re-enter our elements, so they may match partially
+                        ms_prime.allow_partial = true;
                         ms_prime.apply_settings_from();
                         match_type t = elements[i]->match(ms_prime);
                         assert(t != match_type::not_yet);
+                        if (t == match_type::match && ms.get_match_count(elements[i])) {
+                            ms_prime.save_settings_into();
+                            if (other_element_matches(ms, i)) {
+                                // we are re-entering an element which has matched before, but another element also matches
+                                // (e.g. -t after two filenames), so the argument is ambiguous - leave it to the other
+                                // element if it has not matched before, otherwise it is unexpected
+                                t = match_type::no_match;
+                                ms.apply_settings_from();
+                            } else {
+                                ms_prime.apply_settings_from();
+                            }
+                        }
                         if (t == match_type::match) {
                             // we got a match, so record in ms and try again
                             // (if the matchable isn't repeatable it will no match next time)
@@ -868,6 +907,11 @@ namespace cli {
                 if (final_pass) break;
                 if (!matches_this_time) {
                     if (errors_this_time || not_min_this_time) {
+                        if (allow_partial && had_any_matches) {
+                            // we'll be re-entered later, at which point we'll report any error
+                            ms.apply_settings_from();
+                            return match_type::match;
+                        }
                         final_pass = true;
                     } else {
                         break;
@@ -877,6 +921,18 @@ namespace cli {
             return had_any_matches ? match_type::match : match_type::no_match;
         }
 
+        // would any element other than elements[i] match the next argument? note this clobbers the settings
+        bool other_element_matches(const match_state& ms, size_t i) const {
+            for (size_t j=0;j<elements.size();j++) {
+                if (j == i) continue;
+                auto ms_other = ms;
+                ms_other.allow_partial = true;
+                ms_other.apply_settings_from();
+                if (elements[j]->match(ms_other) == match_type::match) return true;
+            }
+            return false;
+        }
+
         match_type match_exclusive(match_state& ms) const {
             vector<match_state> matches(elements.size(), ms);
             vector<match_type> types(elements.size(), match_type::no_match);
@@ -884,16 +940,21 @@ namespace cli {
             int elements_with_no_match = 0;
             int error_at = -1;
             int error_match_count = -1;
+            // if we are being re-entered, then only the alternative which matched previously may match
+            int chosen = -1;
             for (size_t i=0;i<elements.size();i++) {
-                match_type t;
+                if (ms.get_match_count(elements[i])) {
+                    chosen = (int)i;
+                    break;
+                }
+            }
+            for (size_t i=0;i<elements.size();i++) {
+                if (chosen >= 0 && (int)i != chosen) continue;
+                // note we only match once; any containing set will re-enter us if there is more to match
                 matches[i].apply_settings_from();
-                do {
-                    t = elements[i]->match(matches[i]);
-                    assert(t != match_type::not_yet);
-                    if (t != match_type::no_match) {
-                        types[i] = t;
-                    }
-                } while (t == match_type::match);
+                match_type t = elements[i]->match(matches[i]);
+                assert(t != match_type::not_yet);
+                types[i] = t;
                 matches[i].save_settings_into();
                 if (types[i] == match_type::match) {
                     ms = matches[i];
